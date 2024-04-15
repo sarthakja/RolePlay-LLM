@@ -28,5 +28,5 @@ The notebook contains the code, so just running through the cells will work. The
    3. evaluation_results.txt: This file will contain the evaluation result (BertScore and Rouge Score).
   
 # Results
-
+The results for the 3 models: DialoGPT-small, DialoGPT-medium, and TinyLlama-1.1B-chat are present in the results folder.
 
