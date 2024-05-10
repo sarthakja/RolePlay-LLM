@@ -1,7 +1,7 @@
 # RolePlay-LLM
 This repository contains the source code for the CS 521 class project (Spring 2024). The entire code is present as a single Jupyter notebook file. The code is adapted from these two amazing sources: this [script](https://github.com/huggingface/transformers/blob/master/examples/language-modeling/run_language_modeling.py) from Huggingface and great [tutorial](https://nathancooper.io/i-am-a-nerd/chatbot/deep-learning/gpt2/2020/05/12/chatbot-part-1.html) from Nathan Cooper. 
 
-The code makes a decoder only LLM roleplay the neighbor and landlord for the neighbor and landlord scenarios respectively in Social Skills Performace Assessment.
+The code makes a decoder only LLM roleplay the neighbor and landlord for the neighbor and landlord scenarios respectively in Social Skills Performace Assessment (SSPA).
 
 # Dataset
 The data is based on the SSPA interviews of 2 class of patients: Bipolar Disorder and Schizophrenia. Since the data is sensitive, we will not release the dataset here.
