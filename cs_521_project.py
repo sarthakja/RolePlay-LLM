@@ -154,6 +154,7 @@ class Args():
         self.SZ_Scene2 = '/content/drive/MyDrive/RolePlay/SSPA Data/SSPA Data/Complete transcript txt/SZ_SC_2' # Schizophrenia Scene 2
         self.test_size = 0.15
         self.context_size = 800
+        self.new_tokens = 50
 
 
 args = Args()
@@ -227,16 +228,64 @@ def updateChat(chatList, turnTup):
     chatList.append(newDict)
     return chatList
 
-#def updateDatasetList()
+# This method updates the "chat" variable (the list of dictionaries where each dictionary is a conversation turn)
+# Also, this method updates the datasetList variable (from constructConvDataset method below) by adding the next patient and 
+# interviewer turn responses. 
+def updateDatasetList(chat, utterances,end_index,tokenizer,datasetList):
+   # This checks if the length of tokenized (prompt+interviewer's utterance [as given by end_index]) is greater than args.context_size
+   # If that is so, then we simply don't do anything in this function
+   newChat = [{"role": "system","content": chat[0]["content"]}]
+   newChat.append({"role":"assistant", "content":utterances[end_index]})
+   if(len(tokenizer.apply_chat_template(newChat, tokenize=True, add_generation_prompt=False))>args.context_size):
+      return
+   
+   updateChat(chat, utterances[end_index-1])
+   l1 = len(tokenizer.apply_chat_template(chat, tokenize=True, add_generation_prompt=False))
+
+   updateChat(chat, utterances[end_index])
+
+   tokenized_chat = tokenizer.apply_chat_template(chat, tokenize=True, add_generation_prompt=False)
+  
+   labelList = [-100]*l1 + tokenized_chat[l1:]
+
+   if(len(tokenized_chat)>args.context_size):
+      while(len(tokenized_chat)>args.context_size and len(chat)>1):
+         del chat[1]
+         tokenized_chat = tokenizer.apply_chat_template(chat, tokenize=True, add_generation_prompt=False)
+    
+      l1 = len(tokenizer.apply_chat_template(chat[:len(chat)-1], tokenize=True, add_generation_prompt=False))
+      labelList = [-100]*l1 + tokenized_chat[l1:]
+    
+   datasetList.append((tokenized_chat, labelList))
+
+
+def updateDatasetListEvaluate(chat, utterances, end_index, tokenizer, datasetList):
+   # This checks if the length of tokenized (prompt+interviewer's utterance [as given by end_index]) is greater than args.context_size
+   # If that is so, then we simply don't do anything in this function
+   newChat = [{"role": "system","content": chat[0]["content"]}]
+   newChat.append({"role":"user", "content":utterances[end_index-1]})
+   if(len(tokenizer.apply_chat_template(newChat, tokenize=True, add_generation_prompt=True)) > (args.context_size-args.new_tokens) ):
+      return 
+   
+   updateChat(chat, utterances[end_index-1])
+
+   tokenized_chat = tokenizer.apply_chat_template(chat, tokenize=True, add_generation_prompt=True) 
+   updateChat(chat, utterances[end_index])
+   interviewerTokenized = tokenizer.encode(utterances[end_index])
+   datasetList.append((tokenized_chat, interviewerTokenized))
+
+      
 
 """Now will convert our dataset in a format suitable for our model. Basically we will concatenate responses in one string for each conversation ending with the interviewer's response (additionally we will add special 'end of string' token between responses, so the model will understand end of each response in a string).  """
 
-def constructConvDataset(filepath, prompt_string, tokenizer):
-  datasetList=[] # This is a list of lists, where each list represents a part of conversation(in the form of token_ids)
-                 # beginning with the prompt and ending with the interviewer's turn
+def constructConvDataset(filepath, prompt_string, tokenizer,isTrain):
+  datasetList=[] # This is a list of 2-tuples. The first component of the tuple is a list representing a part of conversation
+                 # (in the form of token_ids) beginning with the prompt and ending with the interviewer's turn. The conversation is
+                 # generated after applying chat template. The second component of the tuple is same as the first component except 
+                 # that it has -100 as the token_id before the interviewer's turn.
 
   utterances = []  # This is a list of 2-tuples of (int, string), where the integer in the tuple represents if the
-                   #string is of interviewer(1) or patient(0). Each string represents either patient's turn or the
+                   # string is of interviewer(1) or patient(0). Each string represents either patient's turn or the
                    # interviewer's turn
   current_utterance = ''  # Variable to store the current utterance
   current_label = None  # Variable to store the current label (0 for patient, 1 for interviewer)
@@ -305,32 +354,32 @@ def constructConvDataset(filepath, prompt_string, tokenizer):
   chat = []
   chat.append({"role": "system", "content": prompt_string})
   for x in range(start_index, end_index):
-      print("Before: ", chat)
       updateChat(chat, utterances[x])
-      print("After: ", chat)
-      print()
 
-  l1 = len(tokenizer.apply_chat_template(chat, tokenize=True, add_generation_prompt=False))
+  if(isTrain): 
+    l1 = len(tokenizer.apply_chat_template(chat, tokenize=True, add_generation_prompt=False))
 
-  print("Before: ", chat)
-  updateChat(chat, utterances[end_index])
-  print("After: ", chat)
+    updateChat(chat, utterances[end_index])
 
-  tokenized_chat = tokenizer.apply_chat_template(chat, tokenize=True, add_generation_prompt=False)
+    tokenized_chat = tokenizer.apply_chat_template(chat, tokenize=True, add_generation_prompt=False)
+    
+    labelList = [-100]*l1 + tokenized_chat[l1:]
+    datasetList.append((tokenized_chat, labelList))
+ 
+  else:
+      tokenized_chat = tokenizer.apply_chat_template(chat, tokenize=True, add_generation_prompt=True) 
+      updateChat(chat, utterances[end_index])
+      interviewerTokenized = tokenizer.encode(utterances[end_index])
+      datasetList.append((tokenized_chat, interviewerTokenized))
   
-  labelList = [-100]*l1 + tokenized_chat[l1:]
-  datasetList.append((tokenized_chat, labelList))
-
   #datasetList.append(utterance_list)
-
 
   end_index+=2
   while(end_index<len(utterances)):
-    if(end_index<4):
-       print("Before: ", chat)
-       updateChat(chat, utterances[end_index-1])
-       print("After: ", chat)
-       print()
+    if(isTrain):
+        updateDatasetList(chat, utterances, end_index, tokenizer, datasetList)
+    else:
+        updateDatasetListEvaluate(chat, utterances, end_index, tokenizer, datasetList)
     
     #Uncomment here
     '''
@@ -366,11 +415,6 @@ def constructConvDataset(filepath, prompt_string, tokenizer):
 promptStringNeighbor = "I want you to roleplay a neighbor who has moved in to a new neighborhood. If your neighbor's utterance are related to the utterance you have already seen, please try to reuse the original response lines."
 promptStringLandlord = "I want you to roleplay a landlord who is conversing with a tenant. If your tenant's utterance are related to the utterance you have already seen, please try to reuse the original response lines. The situation is that tenant had complained to you about a leak earlier but that has not been fixed yet."
 
-# Comment this part out
-constructConvDataset(filepath, prompt_string, tokenizer)
-
-#Uncomment here
-'''
 
 # Given a row(list of list of strings, where each string is a dialogue in a turn. The order of dialogues in the row is
 # in reverse order, i.e. the most recent dialogue first, and the oldest dialogue last.), the function returns a single
@@ -433,7 +477,7 @@ class ConversationDataset(Dataset):
         return len(self.examples)
 
     def __getitem__(self, item):
-        return torch.tensor(self.examples[item], dtype=torch.long)
+        return self.examples[item]
 
 # Cacheing and storing of data/checkpoints
 
@@ -595,10 +639,20 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
     args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
 
     # Should use tokenizer's padding mechanism instead of own.
-    def collate(examples: List[torch.Tensor]):
-        if tokenizer._pad_token is None:
-            return pad_sequence(examples, batch_first=True)
-        return pad_sequence(examples, batch_first=True, padding_value=tokenizer.pad_token_id)
+    def collate(examples: List[Tuple[List[int], List[int]]]):
+        completeConversations = []
+        maskedConversations = []
+        for tup in examples:
+            completeConversations.append(torch.tensor(tup[0], dtype = torch.long))
+            maskedConversations.append(torch.tensor(tup[1], dtype = torch.long))
+        
+        completeConversationPadded = pad_sequence(completeConversations, batch_first = True, padding_value = tokenizer.pad_token_id)
+        maskedConversationPadded = pad_sequence(maskedConversations, batch_first = True, padding_value = -100)
+        return (completeConversationPadded, maskedConversationPadded)
+
+        # if tokenizer._pad_token is None:
+        #     return pad_sequence(examples, batch_first=True)
+        # return pad_sequence(examples, batch_first=True, padding_value = tokenizer.pad_token_id)
 
     train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
     train_dataloader = DataLoader(
@@ -728,47 +782,49 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
 
             #print("batch.size(): ", batch.size())
             # Iterate over each example in the batch
-            for example in batch:
-                # Reverse the example
-                #print("example: ", example)
-                example = torch.flip(example,[0])
-                # Find the indices of eos_token_id in the reversed example
-                eos_indices = [i for i, x in enumerate(example) if x == tokenizer.eos_token_id]
-                # Check if there are at least two occurrences of eos_token_id
-                    # Get the index of the second occurrence of eos_token_id
-                idx0 = eos_indices[0]
-                idx1 = eos_indices[1]
-                # Create the current example list
-                current_example = torch.cat([torch.full((idx0,),-100),example[idx0:idx1]])
-                # Pad the current example list with -100
-                current_example = torch.cat([current_example, torch.full((len(example) - len(current_example),),-100)] )
-                attention_mask = torch.cat([torch.full((idx0,),0),torch.full((len(example) - idx0,),1)])
+            # for example in batch:
+            #     # Reverse the example
+            #     #print("example: ", example)
+            #     example = torch.flip(example,[0])
+            #     # Find the indices of eos_token_id in the reversed example
+            #     eos_indices = [i for i, x in enumerate(example) if x == tokenizer.eos_token_id]
+            #     # Check if there are at least two occurrences of eos_token_id
+            #         # Get the index of the second occurrence of eos_token_id
+            #     idx0 = eos_indices[0]
+            #     idx1 = eos_indices[1]
+            #     # Create the current example list
+            #     current_example = torch.cat([torch.full((idx0,),-100),example[idx0:idx1]])
+            #     # Pad the current example list with -100
+            #     current_example = torch.cat([current_example, torch.full((len(example) - len(current_example),),-100)] )
+            #     attention_mask = torch.cat([torch.full((idx0,),0),torch.full((len(example) - idx0,),1)])
 
-                #current_example = torch.cat([current_example, torch.full((len(example) - len(current_example),),-100)] )
-                # Reverse the current example list
-                current_example = torch.flip(current_example,[0])
-                # print("len(example): ", len(example))
-                # print("len(current_example): ", len(current_example))
+            #     #current_example = torch.cat([current_example, torch.full((len(example) - len(current_example),),-100)] )
+            #     # Reverse the current example list
+            #     current_example = torch.flip(current_example,[0])
+            #     # print("len(example): ", len(example))
+            #     # print("len(current_example): ", len(current_example))
 
-                # Append the current example to labels
-                labels.append(current_example)
-                attention_masks.append(attention_mask)
+            #     # Append the current example to labels
+            #     labels.append(current_example)
+            #     attention_masks.append(attention_mask)
 
-            labels = torch.stack(labels)
-            attention_masks = torch.stack(attention_masks)
+            # labels = torch.stack(labels)
+            # attention_masks = torch.stack(attention_masks)
 
 
 
-            inputs = batch
-            #inputs, labels = (batch, batch)
-            if inputs.shape[1] > 1024: continue
-            inputs = inputs.to(args.device)
-            labels = labels.to(args.device)
-            attention_masks = attention_masks.to(args.device)
+            # inputs = batch
+            # #inputs, labels = (batch, batch)
+            # if inputs.shape[1] > 1024: continue
+            # inputs = inputs.to(args.device)
+            # labels = labels.to(args.device)
+            # attention_masks = attention_masks.to(args.device)
             model.train()
 
             #This is wrong, should only compute loss for the response turn, here loss is being computed for every turn
-            outputs = model(inputs, labels=labels, attention_mask = attention_masks)
+            #outputs = model(inputs, labels=labels, attention_mask = attention_masks)
+            batch = batch.to(args.device)
+            outputs = model(batch[0], labels=batch[1])
             loss = outputs[0]  # model outputs are always tuple in transformers (see doc)
 
             if args.n_gpu > 1:
@@ -853,10 +909,20 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, df_tr
     args.eval_batch_size = args.per_gpu_eval_batch_size * max(1, args.n_gpu)
     # Note that DistributedSampler samples randomly
 
-    def collate(examples: List[torch.Tensor]):
-        if tokenizer._pad_token is None:
-            return pad_sequence(examples, batch_first=True)
-        return pad_sequence(examples, batch_first=True, padding_value=tokenizer.pad_token_id)
+    def collate(examples: List[Tuple[List[int], List[int]]]):
+        completeConversations = []
+        maskedConversations = []
+        for tup in examples:
+            completeConversations.append(torch.tensor(tup[0], dtype = torch.long))
+            maskedConversations.append(torch.tensor(tup[1], dtype = torch.long))
+        
+        completeConversationPadded = pad_sequence(completeConversations, batch_first = True, padding_value = tokenizer.pad_token_id)
+        maskedConversationPadded = pad_sequence(maskedConversations, batch_first = True, padding_value = -100)
+        return (completeConversationPadded, maskedConversationPadded)
+        
+        # if tokenizer._pad_token is None:
+        #     return pad_sequence(examples, batch_first=True)
+        # return pad_sequence(examples, batch_first=True, padding_value=tokenizer.pad_token_id)
 
     eval_sampler = SequentialSampler(eval_dataset)
     eval_dataloader = DataLoader(
@@ -1177,5 +1243,3 @@ The model is ready, so it's time to chat with it.
 
 #     # pretty print last ouput tokens from bot
 #     print("Bot: {}".format(tokenizer.decode(chat_history_ids[:, bot_input_ids.shape[-1]:][0], skip_special_tokens=True)))
-
-'''
