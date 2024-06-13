@@ -21,8 +21,9 @@ import torch
 import re
 # Replace TinyLlama/TinyLlama-1.1B-Chat-v1.0 with any other LLM trained with Causal LM objective
 tokenizer = AutoTokenizer.from_pretrained("TinyLlama/TinyLlama-1.1B-Chat-v1.0")
+#print("Tokenizer assigned")
 model = AutoModelForCausalLM.from_pretrained("TinyLlama/TinyLlama-1.1B-Chat-v1.0")
-#tokenizer.pad_token = '[PAD]'
+tokenizer.pad_token = '[PAD]'
 
 # Check if GPU is available
 if torch.cuda.is_available():
@@ -113,18 +114,18 @@ MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
 # Args to allow for easy convertion of python script to notebook
 class Args():
     def __init__(self):
-        self.output_dir = '/content/drive/MyDrive/RolePlay/TinyLlama-1.1B-Chat-v1.0'  # set the output directory here
+        self.output_dir = './TinyLlama-1.1B-Chat-v1.0'  # set the output directory here
         self.model_type = 'TinyLlama/TinyLlama-1.1B-Chat-v1.0' # set the model type here
         self.model_name_or_path = 'TinyLlama/TinyLlama-1.1B-Chat-v1.0' # set the model id here
         self.config_name = 'TinyLlama/TinyLlama-1.1B-Chat-v1.0'
         self.tokenizer_name = 'TinyLlama/TinyLlama-1.1B-Chat-v1.0' # set the tokenizer name here
-        self.cache_dir = '/content/drive/MyDrive/RolePlay/cached' # set the path to cache directory here
+        self.cache_dir = './cached' # set the path to cache directory here
         self.block_size = 512
         self.do_train = True
         self.do_eval = True
         self.evaluate_during_training = False
-        self.per_gpu_train_batch_size = 2
-        self.per_gpu_eval_batch_size = 2
+        self.per_gpu_train_batch_size = 1
+        self.per_gpu_eval_batch_size = 1
         self.gradient_accumulation_steps = 1
         self.learning_rate = 5e-6
         self.weight_decay = 1e-2 # was 0.0
@@ -146,15 +147,16 @@ class Args():
         self.fp16 = False
         self.fp16_opt_level = 'O1'
         # Set paths to the folder where each dataset is stored.
-        self.BD_Scene1 = '/content/drive/MyDrive/RolePlay/SSPA Data/SSPA Data/Complete transcript txt/BD_SC_1' # Bipolar Scene 1
-        self.BD_Scene2 = '/content/drive/MyDrive/RolePlay/SSPA Data/SSPA Data/Complete transcript txt/BD_SC_2' # Bipolar Scene 2
-        self.HC_Scene1 = '/content/drive/MyDrive/RolePlay/SSPA Data/SSPA Data/Complete transcript txt/HC_SC_1' # Healthy Control Scene 1
-        self.HC_Scene2 = '/content/drive/MyDrive/RolePlay/SSPA Data/SSPA Data/Complete transcript txt/HC_SC_2' # Healthy Control Scene 2
-        self.SZ_Scene1 = '/content/drive/MyDrive/RolePlay/SSPA Data/SSPA Data/Complete transcript txt/SZ_SC_1' # Schizophrenia Scene 1
-        self.SZ_Scene2 = '/content/drive/MyDrive/RolePlay/SSPA Data/SSPA Data/Complete transcript txt/SZ_SC_2' # Schizophrenia Scene 2
+        self.BD_Scene1 = './dataset/BD_SC_1' # Bipolar Scene 1
+        self.BD_Scene2 = './dataset/BD_SC_2' # Bipolar Scene 2
+        self.HC_Scene1 = './dataset/HC_SC_1' # Healthy Control Scene 1
+        self.HC_Scene2 = './dataset/HC_SC_2' # Healthy Control Scene 2
+        self.SZ_Scene1 = './dataset/SZ_SC_1' # Schizophrenia Scene 1
+        self.SZ_Scene2 = './dataset/SZ_SC_2' # Schizophrenia Scene 2
         self.test_size = 0.15
         self.context_size = 800
         self.new_tokens = 50
+        self.device_id = 1
 
 
 args = Args()
@@ -198,7 +200,9 @@ def list_files(directory):
 
 # trn_df = BD_SC1_trn_df + BD_SC2_trn_df + HC_SC1_trn_df + HC_SC2_trn_df + SZ_SC1_trn_df + SZ_SC2_trn_df
 
-# torch.save(trn_df,'/content/drive/MyDrive/RolePlay/trainset.pkl')
+# os.makedirs(args.output_dir, exist_ok = True)
+
+# torch.save(trn_df, os.path.join(args.output_dir, 'trainset.pkl'))
 
 # torch.save(BD_SC1_val_df, os.path.join(args.output_dir, 'BD_SC1_val.pkl'))
 # torch.save(BD_SC2_val_df, os.path.join(args.output_dir, 'BD_SC2_val.pkl'))
@@ -231,11 +235,11 @@ def updateChat(chatList, turnTup):
 # This method updates the "chat" variable (the list of dictionaries where each dictionary is a conversation turn)
 # Also, this method updates the datasetList variable (from constructConvDataset method below) by adding the next patient and 
 # interviewer turn responses. 
-def updateDatasetList(chat, utterances,end_index,tokenizer,datasetList):
+def updateDatasetList(chat, utterances,end_index, tokenizer, datasetList):
    # This checks if the length of tokenized (prompt+interviewer's utterance [as given by end_index]) is greater than args.context_size
    # If that is so, then we simply don't do anything in this function
    newChat = [{"role": "system","content": chat[0]["content"]}]
-   newChat.append({"role":"assistant", "content":utterances[end_index]})
+   newChat.append({"role":"assistant", "content":utterances[end_index][1]})
    if(len(tokenizer.apply_chat_template(newChat, tokenize=True, add_generation_prompt=False))>args.context_size):
       return
    
@@ -263,7 +267,7 @@ def updateDatasetListEvaluate(chat, utterances, end_index, tokenizer, datasetLis
    # This checks if the length of tokenized (prompt+interviewer's utterance [as given by end_index]) is greater than args.context_size
    # If that is so, then we simply don't do anything in this function
    newChat = [{"role": "system","content": chat[0]["content"]}]
-   newChat.append({"role":"user", "content":utterances[end_index-1]})
+   newChat.append({"role":"user", "content":utterances[end_index-1][1]})
    if(len(tokenizer.apply_chat_template(newChat, tokenize=True, add_generation_prompt=True)) > (args.context_size-args.new_tokens) ):
       return 
    
@@ -271,7 +275,7 @@ def updateDatasetListEvaluate(chat, utterances, end_index, tokenizer, datasetLis
 
    tokenized_chat = tokenizer.apply_chat_template(chat, tokenize=True, add_generation_prompt=True) 
    updateChat(chat, utterances[end_index])
-   interviewerTokenized = tokenizer.encode(utterances[end_index])
+   interviewerTokenized = tokenizer.encode(utterances[end_index][1])
    datasetList.append((tokenized_chat, interviewerTokenized))
 
       
@@ -279,10 +283,17 @@ def updateDatasetListEvaluate(chat, utterances, end_index, tokenizer, datasetLis
 """Now will convert our dataset in a format suitable for our model. Basically we will concatenate responses in one string for each conversation ending with the interviewer's response (additionally we will add special 'end of string' token between responses, so the model will understand end of each response in a string).  """
 
 def constructConvDataset(filepath, prompt_string, tokenizer,isTrain):
-  datasetList=[] # This is a list of 2-tuples. The first component of the tuple is a list representing a part of conversation
+  datasetList=[] # This is a list of 2-tuples. 
+                 # If isTrain is true, then tuple is constructed as:
+                 # The first component of the tuple is a list representing a part of conversation
                  # (in the form of token_ids) beginning with the prompt and ending with the interviewer's turn. The conversation is
                  # generated after applying chat template. The second component of the tuple is same as the first component except 
                  # that it has -100 as the token_id before the interviewer's turn.
+                 # else if isTrain is false:
+                 # The first component of the tuple is a list representing a part of conversation
+                 # (in the form of token_ids) beginning with the prompt and ending with the patient's turn. The conversation is
+                 # generated after applying chat template, and setting the add_generation_prompt to true. The second component of the
+                 # tuple is the tokenized interviewer's response. 
 
   utterances = []  # This is a list of 2-tuples of (int, string), where the integer in the tuple represents if the
                    # string is of interviewer(1) or patient(0). Each string represents either patient's turn or the
@@ -367,10 +378,10 @@ def constructConvDataset(filepath, prompt_string, tokenizer,isTrain):
     datasetList.append((tokenized_chat, labelList))
  
   else:
-      tokenized_chat = tokenizer.apply_chat_template(chat, tokenize=True, add_generation_prompt=True) 
-      updateChat(chat, utterances[end_index])
-      interviewerTokenized = tokenizer.encode(utterances[end_index])
-      datasetList.append((tokenized_chat, interviewerTokenized))
+    tokenized_chat = tokenizer.apply_chat_template(chat, tokenize=True, add_generation_prompt=True) 
+    updateChat(chat, utterances[end_index])
+    interviewerTokenized = tokenizer.encode(utterances[end_index][1])
+    datasetList.append((tokenized_chat, interviewerTokenized))
   
   #datasetList.append(utterance_list)
 
@@ -432,7 +443,7 @@ def construct_conv(row, tokenizer, eos = True):
 # list of lists is a parameter of the init method. df is a list of strings, where each string
 # represents a filename.
 class ConversationDataset(Dataset):
-    def __init__(self, tokenizer: PreTrainedTokenizer, args, df, block_size=512):
+    def __init__(self, tokenizer: PreTrainedTokenizer, args, df, isTrain, block_size=512):
 
         block_size = block_size - (tokenizer.model_max_length - tokenizer.max_len_single_sentence)
         print("Effective block size: ", block_size)
@@ -459,10 +470,10 @@ class ConversationDataset(Dataset):
             for fil in df:
               if("Scene 1" in fil):
                 #print(fil)
-                conv_list = constructConvDataset(fil, promptStringNeighbor, tokenizer)
+                conv_list = constructConvDataset(fil, promptStringNeighbor, tokenizer, isTrain)
                 self.examples += conv_list
               else:
-                conv_list = constructConvDataset(fil, promptStringLandlord, tokenizer)
+                conv_list = constructConvDataset(fil, promptStringLandlord, tokenizer, isTrain)
                 self.examples += conv_list
 
             logger.info("Saving features into cached file %s", cached_features_file)
@@ -482,7 +493,7 @@ class ConversationDataset(Dataset):
 # Cacheing and storing of data/checkpoints
 
 def load_and_cache_examples(args, tokenizer, df_trn, df_val, evaluate=False):
-    return ConversationDataset(tokenizer, args, df_val if evaluate else df_trn)
+    return ConversationDataset(tokenizer, args, df_val if evaluate else df_trn, not evaluate)
 
 
 def set_seed(args):
@@ -542,7 +553,7 @@ from transformers import AutoModel
 
 #goldLabels, and generatedoutputs are lists of token ids that are passed during the evaluate method
 def calculate_cosine(goldLabels, generatedoutputs, decoderTokenizer):
-  device = torch.device("cuda")
+  device = torch.device(f'cuda:{args.device_id}')
   goldLabelsDecoded = list(map(lambda l: decoderTokenizer.decode(l,skip_special_tokens = True), goldLabels ))
   goldLabelsDecoded = torch.tensor(goldLabelsDecoded)
   goldLabelsDecoded = goldLabelsDecoded.to(device)
@@ -578,6 +589,9 @@ def calculate_rouge(goldLabels, generatedoutputs, decoderTokenizer):
   # print(goldLabelsdecoded[0:3])
   # print(generatedDecoded[0:3])
   rouge = ROUGEScore(rouge_keys=('rouge1', 'rougeL'))
+  
+  print("In Calculate rouge, goldLabelsDecoded: ", goldLabelsdecoded)
+  print("In Calculate rouge, generatedDecoded: ", generatedDecoded)
 
   return rouge(generatedDecoded, goldLabelsdecoded)
 
@@ -777,8 +791,8 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
 
             # Initialize an empty list to store labels
 
-            labels = []
-            attention_masks = []
+            # labels = []
+            # attention_masks = []
 
             #print("batch.size(): ", batch.size())
             # Iterate over each example in the batch
@@ -823,10 +837,14 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
 
             #This is wrong, should only compute loss for the response turn, here loss is being computed for every turn
             #outputs = model(inputs, labels=labels, attention_mask = attention_masks)
-            batch = batch.to(args.device)
-            outputs = model(batch[0], labels=batch[1])
+            inputs = batch[0]
+            labels = batch[1]
+            inputs = inputs.to(args.device)
+            labels = labels.to(args.device)
+            outputs = model(inputs, labels=labels)
             loss = outputs[0]  # model outputs are always tuple in transformers (see doc)
-
+            #print("********Printing loss: ", loss)
+            #print()
             if args.n_gpu > 1:
                 loss = loss.mean()  # mean() to average on multi-gpu parallel training
             if args.gradient_accumulation_steps > 1:
@@ -910,15 +928,18 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, df_tr
     # Note that DistributedSampler samples randomly
 
     def collate(examples: List[Tuple[List[int], List[int]]]):
-        completeConversations = []
-        maskedConversations = []
+        inputConversations = []
+        interviewerResponses = []
+        attention_masks = []
         for tup in examples:
-            completeConversations.append(torch.tensor(tup[0], dtype = torch.long))
-            maskedConversations.append(torch.tensor(tup[1], dtype = torch.long))
+            inputConversations.append(torch.tensor(tup[0], dtype = torch.long))
+            attention_mask = torch.full((len(tup[0]),),1)
+            attention_masks.append(attention_mask)
+            interviewerResponses.append(tup[1])
         
-        completeConversationPadded = pad_sequence(completeConversations, batch_first = True, padding_value = tokenizer.pad_token_id)
-        maskedConversationPadded = pad_sequence(maskedConversations, batch_first = True, padding_value = -100)
-        return (completeConversationPadded, maskedConversationPadded)
+        inputConversationPadded = pad_sequence(inputConversations, batch_first = True, padding_value = tokenizer.pad_token_id)
+        attention_masks = pad_sequence(attention_masks, batch_first = True, padding_value = 0)
+        return (inputConversationPadded, interviewerResponses, attention_masks)
         
         # if tokenizer._pad_token is None:
         #     return pad_sequence(examples, batch_first=True)
@@ -961,40 +982,46 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, df_tr
         #     eval_loss += lm_loss.mean().item()
         # nb_eval_steps += 1
 
-        inputs = []
-        attention_masks=[]
+        # inputs = []
+        # attention_masks=[]
 
-        for example in batch:
-          #print("Printing raw example: ", tokenizer.decode(example))
-          example = torch.flip(example,[0])
-          # Find the indices of eos_token_id in the reversed example
-          eos_indices = [i for i, x in enumerate(example) if x == tokenizer.eos_token_id]
-          # Check if there are at least two occurrences of eos_token_id
+        # for example in batch:
+        #   #print("Printing raw example: ", tokenizer.decode(example))
+        #   example = torch.flip(example,[0])
+        #   # Find the indices of eos_token_id in the reversed example
+        #   eos_indices = [i for i, x in enumerate(example) if x == tokenizer.eos_token_id]
+        #   # Check if there are at least two occurrences of eos_token_id
 
-          # Get the index of the second occurrence of eos_token_id
-          idx0 = eos_indices[0]
-          idx1 = eos_indices[1]
-          # Create the current example list
-          current_example = example[idx0+1:idx1]
-          # Pad the current example list with -100
-          remaining_example = example[idx1:]
-          # Reverse the current example list
-          current_example = torch.flip(current_example,[0])
-          remaining_example = torch.flip(remaining_example,[0])
-          attention_mask = torch.full((len(remaining_example),),1)
+        #   # Get the index of the second occurrence of eos_token_id
+        #   idx0 = eos_indices[0]
+        #   idx1 = eos_indices[1]
+        #   # Create the current example list
+        #   current_example = example[idx0+1:idx1]
+        #   # Pad the current example list with -100
+        #   remaining_example = example[idx1:]
+        #   # Reverse the current example list
+        #   current_example = torch.flip(current_example,[0])
+        #   remaining_example = torch.flip(remaining_example,[0])
+        #   attention_mask = torch.full((len(remaining_example),),1)
 
-          #print("Printing extracted label: ", tokenizer.decode(current_example))
-          if(len(current_example) ==0):
-            print("Empty label detected. eos_indices: ", eos_indices," full example: ", tokenizer.decode(torch.flip(example,[0])))
-          labels.append(current_example.tolist())
-          inputs.append(remaining_example)
-          attention_masks.append(attention_mask)
+        #   #print("Printing extracted label: ", tokenizer.decode(current_example))
+        #   if(len(current_example) ==0):
+        #     print("Empty label detected. eos_indices: ", eos_indices," full example: ", tokenizer.decode(torch.flip(example,[0])))
+        #   labels.append(current_example.tolist())
+        #   inputs.append(remaining_example)
+        #   attention_masks.append(attention_mask)
 
-        inputs = pad_sequence(inputs, batch_first = True)
-        attention_masks = pad_sequence(attention_masks, batch_first = True)
+        # inputs = pad_sequence(inputs, batch_first = True)
+        # attention_masks = pad_sequence(attention_masks, batch_first = True)
         # print(attention_masks)
         # print("Inputs: ", inputs)
-        device = torch.device("cuda")
+
+        inputs = batch[0]
+        labels = labels + batch[1]
+        attention_masks = batch[2]
+
+
+        device = torch.device(f'cuda:{args.device_id}')
         inputs = inputs.to(device)
         # if(inputs.size()[-1]>1024):
         #   print(inputs)
@@ -1025,6 +1052,7 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, df_tr
     # print("Length of generated_output", len(generated_output))
     # print("Printing labels: ", list(map(lambda l: tokenizer.decode(l, skip_special_tokens = True), labels )))
     # print("Printing generated_output: ", list(map(lambda l: tokenizer.decode(l, skip_special_tokens = True), generated_output )))
+    #print("In evaluation caller, generated_output: ", generated_output)
     rouge_value = calculate_rouge(labels, generated_output, tokenizer)
     print("Rouge calculated")
     bertscore_value = calculate_bert_score(labels, generated_output, tokenizer)
@@ -1054,7 +1082,7 @@ import time
 
 # Main runner
 
-def main(df_trn, df_val):
+def mainfun(df_trn, df_val):
     args = Args()
 
     if args.should_continue:
@@ -1078,8 +1106,12 @@ def main(df_trn, df_val):
         )
 
     # Setup CUDA, GPU & distributed training
-    device = torch.device("cuda")
-    args.n_gpu = torch.cuda.device_count()
+    device = torch.device(f'cuda:{args.device_id}')
+    ############### This has been manually set to 1 here, use the original line when doing multiple GPU training ###################
+    args.n_gpu = 1
+    ################# Original line #####################
+    #args.n_gpu = torch.cuda.device_count()
+    ####################################################
     args.device = device
 
     # Setup logging
@@ -1102,6 +1134,7 @@ def main(df_trn, df_val):
 
     config = AutoConfig.from_pretrained(args.config_name)
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name)
+    tokenizer.pad_token = '[PAD]'
     model = AutoModelForCausalLM.from_pretrained(
         args.model_name_or_path,
         from_tf=False,
@@ -1148,8 +1181,14 @@ def main(df_trn, df_val):
         model.to(args.device)
 
 def evaluation_caller(df_val, df_trn, setting):
-    device = torch.device("cuda")
-    args.n_gpu = torch.cuda.device_count()
+    device = torch.device(f'cuda:{args.device_id}')
+
+    ############### This has been manually set to 1 here, use the original line when doing multi - GPU training ###################
+    args.n_gpu = 1
+    ################# Original line #####################
+    #args.n_gpu = torch.cuda.device_count()
+    ######################################################
+
     args.device = device
     results = {}
     if args.do_eval and args.local_rank in [-1, 0]:
@@ -1194,17 +1233,17 @@ def evaluation_caller(df_val, df_trn, setting):
 Image from [Giphy](https://giphy.com/)
 """
 
-trn_df = torch.load('/content/drive/MyDrive/RolePlay/trainset.pkl')
+trn_df = torch.load(os.path.join(args.output_dir, 'trainset.pkl'))
 
-BD_SC1_val_df = torch.load('/content/drive/MyDrive/RolePlay/BD_SC1_val.pkl')
-BD_SC2_val_df = torch.load('/content/drive/MyDrive/RolePlay/BD_SC2_val.pkl')
-HC_SC1_val_df = torch.load('/content/drive/MyDrive/RolePlay/HC_SC1_val.pkl')
-HC_SC2_val_df = torch.load('/content/drive/MyDrive/RolePlay/HC_SC2_val.pkl')
-SZ_SC1_val_df = torch.load('/content/drive/MyDrive/RolePlay/SZ_SC1_val.pkl')
-SZ_SC2_val_df = torch.load('/content/drive/MyDrive/RolePlay/SZ_SC2_val.pkl')
+BD_SC1_val_df = torch.load(os.path.join(args.output_dir, 'BD_SC1_val.pkl'))
+BD_SC2_val_df = torch.load(os.path.join(args.output_dir, 'BD_SC2_val.pkl'))
+HC_SC1_val_df = torch.load(os.path.join(args.output_dir, 'HC_SC1_val.pkl'))
+HC_SC2_val_df = torch.load(os.path.join(args.output_dir, 'HC_SC2_val.pkl'))
+SZ_SC1_val_df = torch.load(os.path.join(args.output_dir, 'SZ_SC1_val.pkl'))
+SZ_SC2_val_df = torch.load(os.path.join(args.output_dir, 'SZ_SC2_val.pkl'))
 
 #Call main to train model
-main(trn_df, BD_SC1_val_df)
+#mainfun(trn_df, BD_SC1_val_df)
 
 print("Final result of BD Scene1: ", evaluation_caller(BD_SC1_val_df, trn_df, "BD Scene 1"))
 print("Final result of BD Scene2: ", evaluation_caller(BD_SC2_val_df, trn_df, "BD Scene 2"))
