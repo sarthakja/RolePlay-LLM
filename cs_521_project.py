@@ -19,11 +19,21 @@ from torchmetrics.text.rouge import ROUGEScore
 from pprint import pprint
 import torch
 import re
-# Replace TinyLlama/TinyLlama-1.1B-Chat-v1.0 with any other LLM trained with Causal LM objective
+from accelerate import Accelerator
+from huggingface_hub import login
+from pynvml import *
+from peft import get_peft_config, get_peft_model, LoraConfig, TaskType, PeftModel
+
+hf_api_token = "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"
+login(hf_api_token)
+
+
+# Replace meta-llama/Llama-2-7b-chat-hf with any other LLM trained with Causal LM objective
 tokenizer = AutoTokenizer.from_pretrained("TinyLlama/TinyLlama-1.1B-Chat-v1.0")
 #print("Tokenizer assigned")
 model = AutoModelForCausalLM.from_pretrained("TinyLlama/TinyLlama-1.1B-Chat-v1.0")
 tokenizer.pad_token = '[PAD]'
+accelerator = Accelerator(rng_types=["torch", "cuda", "generator"])
 
 # Check if GPU is available
 if torch.cuda.is_available():
@@ -109,6 +119,12 @@ logger = logging.getLogger(__name__)
 MODEL_CONFIG_CLASSES = list(MODEL_WITH_LM_HEAD_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
 
+def print_gpu_utilization():
+    nvmlInit()
+    handle = nvmlDeviceGetHandleByIndex(accelerator.process_index)
+    info = nvmlDeviceGetMemoryInfo(handle)
+    print(f"GPU memory occupied: {info.used//1024**2} MB.")
+
 """# **Set the arguments here**"""
 
 # Args to allow for easy convertion of python script to notebook
@@ -121,7 +137,7 @@ class Args():
         self.tokenizer_name = 'TinyLlama/TinyLlama-1.1B-Chat-v1.0' # set the tokenizer name here
         self.cache_dir = './cached' # set the path to cache directory here
         self.block_size = 512
-        self.do_train = True
+        self.do_train = False
         self.do_eval = True
         self.evaluate_during_training = False
         self.per_gpu_train_batch_size = 1
@@ -153,10 +169,11 @@ class Args():
         self.HC_Scene2 = './dataset/HC_SC_2' # Healthy Control Scene 2
         self.SZ_Scene1 = './dataset/SZ_SC_1' # Schizophrenia Scene 1
         self.SZ_Scene2 = './dataset/SZ_SC_2' # Schizophrenia Scene 2
-        self.test_size = 0.15
+        self.test_size = 0.20
         self.context_size = 800
         self.new_tokens = 50
         self.device_id = 1
+        self.create_dataframe = False
 
 
 args = Args()
@@ -183,33 +200,34 @@ def list_files(directory):
 """Comment the next 4 cells once the train and test data frames are prepared"""
 
 # transcript_path = '/content/drive/MyDrive/RolePlay/SSPA Data/SSPA Data/Complete transcript txt/All transcripts'
-# BD_SC1_filenames = list_files(args.BD_Scene1)
-# BD_SC2_filenames = list_files(args.BD_Scene2)
-# HC_SC1_filenames = list_files(args.HC_Scene1)
-# HC_SC2_filenames = list_files(args.HC_Scene2)
-# SZ_SC1_filenames = list_files(args.SZ_Scene1)
-# SZ_SC2_filenames = list_files(args.SZ_Scene2)
+if args.create_dataframe and accelerator.is_main_process:
+    BD_SC1_filenames = list_files(args.BD_Scene1)
+    BD_SC2_filenames = list_files(args.BD_Scene2)
+    HC_SC1_filenames = list_files(args.HC_Scene1)
+    HC_SC2_filenames = list_files(args.HC_Scene2)
+    SZ_SC1_filenames = list_files(args.SZ_Scene1)
+    SZ_SC2_filenames = list_files(args.SZ_Scene2)
 
-# # trn_df and val_df are list of filenames(complete names with path)
-# BD_SC1_trn_df, BD_SC1_val_df = train_test_split(BD_SC1_filenames, test_size = args.test_size)
-# BD_SC2_trn_df, BD_SC2_val_df = train_test_split(BD_SC2_filenames, test_size = args.test_size)
-# HC_SC1_trn_df, HC_SC1_val_df = train_test_split(HC_SC1_filenames, test_size = args.test_size)
-# HC_SC2_trn_df, HC_SC2_val_df = train_test_split(HC_SC2_filenames, test_size = args.test_size)
-# SZ_SC1_trn_df, SZ_SC1_val_df = train_test_split(SZ_SC1_filenames, test_size = args.test_size)
-# SZ_SC2_trn_df, SZ_SC2_val_df = train_test_split(SZ_SC2_filenames, test_size = args.test_size)
+    # trn_df and val_df are list of filenames(complete names with path)
+    BD_SC1_trn_df, BD_SC1_val_df = train_test_split(BD_SC1_filenames, test_size = args.test_size)
+    BD_SC2_trn_df, BD_SC2_val_df = train_test_split(BD_SC2_filenames, test_size = args.test_size)
+    HC_SC1_trn_df, HC_SC1_val_df = train_test_split(HC_SC1_filenames, test_size = args.test_size)
+    HC_SC2_trn_df, HC_SC2_val_df = train_test_split(HC_SC2_filenames, test_size = args.test_size)
+    SZ_SC1_trn_df, SZ_SC1_val_df = train_test_split(SZ_SC1_filenames, test_size = args.test_size)
+    SZ_SC2_trn_df, SZ_SC2_val_df = train_test_split(SZ_SC2_filenames, test_size = args.test_size)
 
-# trn_df = BD_SC1_trn_df + BD_SC2_trn_df + HC_SC1_trn_df + HC_SC2_trn_df + SZ_SC1_trn_df + SZ_SC2_trn_df
+    trn_df = BD_SC1_trn_df + BD_SC2_trn_df + HC_SC1_trn_df + HC_SC2_trn_df + SZ_SC1_trn_df + SZ_SC2_trn_df
 
-# os.makedirs(args.output_dir, exist_ok = True)
+    os.makedirs(args.output_dir, exist_ok = True)
 
-# torch.save(trn_df, os.path.join(args.output_dir, 'trainset.pkl'))
+    torch.save(trn_df, os.path.join(args.output_dir, 'trainset.pkl'))
 
-# torch.save(BD_SC1_val_df, os.path.join(args.output_dir, 'BD_SC1_val.pkl'))
-# torch.save(BD_SC2_val_df, os.path.join(args.output_dir, 'BD_SC2_val.pkl'))
-# torch.save(HC_SC1_val_df, os.path.join(args.output_dir, 'HC_SC1_val.pkl'))
-# torch.save(HC_SC2_val_df, os.path.join(args.output_dir, 'HC_SC2_val.pkl'))
-# torch.save(SZ_SC1_val_df, os.path.join(args.output_dir, 'SZ_SC1_val.pkl'))
-# torch.save(SZ_SC2_val_df, os.path.join(args.output_dir, 'SZ_SC2_val.pkl'))
+    torch.save(BD_SC1_val_df, os.path.join(args.output_dir, 'BD_SC1_val.pkl'))
+    torch.save(BD_SC2_val_df, os.path.join(args.output_dir, 'BD_SC2_val.pkl'))
+    torch.save(HC_SC1_val_df, os.path.join(args.output_dir, 'HC_SC1_val.pkl'))
+    torch.save(HC_SC2_val_df, os.path.join(args.output_dir, 'HC_SC2_val.pkl'))
+    torch.save(SZ_SC1_val_df, os.path.join(args.output_dir, 'SZ_SC1_val.pkl'))
+    torch.save(SZ_SC2_val_df, os.path.join(args.output_dir, 'SZ_SC2_val.pkl'))
 
 # print(len(trn_df))
 # print(len(val_df))
@@ -227,6 +245,9 @@ def updateChat(chatList, turnTup):
         newDict["role"] = "user"
     else:
         newDict["role"] = "assistant"
+        if(args.model_name_or_path == "meta-llama/Llama-2-7b-chat-hf" and len(chatList) == 1):
+            chatList.append({"role":"user", "content":""})
+
 
     newDict["content"] = turnTup[1]    
     chatList.append(newDict)
@@ -238,7 +259,10 @@ def updateChat(chatList, turnTup):
 def updateDatasetList(chat, utterances,end_index, tokenizer, datasetList):
    # This checks if the length of tokenized (prompt+interviewer's utterance [as given by end_index]) is greater than args.context_size
    # If that is so, then we simply don't do anything in this function
+   
    newChat = [{"role": "system","content": chat[0]["content"]}]
+   if(args.model_name_or_path == "meta-llama/Llama-2-7b-chat-hf"):
+       newChat.append({"role":"user", "content":""})
    newChat.append({"role":"assistant", "content":utterances[end_index][1]})
    if(len(tokenizer.apply_chat_template(newChat, tokenize=True, add_generation_prompt=False))>args.context_size):
       return
@@ -282,7 +306,7 @@ def updateDatasetListEvaluate(chat, utterances, end_index, tokenizer, datasetLis
 
 """Now will convert our dataset in a format suitable for our model. Basically we will concatenate responses in one string for each conversation ending with the interviewer's response (additionally we will add special 'end of string' token between responses, so the model will understand end of each response in a string).  """
 
-def constructConvDataset(filepath, prompt_string, tokenizer,isTrain):
+def constructConvDataset(filepath, prompt_string, tokenizer, isTrain):
   datasetList=[] # This is a list of 2-tuples. 
                  # If isTrain is true, then tuple is constructed as:
                  # The first component of the tuple is a list representing a part of conversation
@@ -367,17 +391,22 @@ def constructConvDataset(filepath, prompt_string, tokenizer,isTrain):
   for x in range(start_index, end_index):
       updateChat(chat, utterances[x])
 
-  if(isTrain): 
+  # I have incorporated the condition len(chat)>1 to account for scene 2(Neighbor scenario). In this scenario, the interviewer always
+  # starts with a default prompt. So we don't want to be predicting that
+  if(end_index == 0):
+      updateChat(chat, utterances[end_index])
+
+  if(isTrain and end_index > 0): 
     l1 = len(tokenizer.apply_chat_template(chat, tokenize=True, add_generation_prompt=False))
 
     updateChat(chat, utterances[end_index])
 
     tokenized_chat = tokenizer.apply_chat_template(chat, tokenize=True, add_generation_prompt=False)
-    
+        
     labelList = [-100]*l1 + tokenized_chat[l1:]
     datasetList.append((tokenized_chat, labelList))
  
-  else:
+  elif(end_index > 0):
     tokenized_chat = tokenizer.apply_chat_template(chat, tokenize=True, add_generation_prompt=True) 
     updateChat(chat, utterances[end_index])
     interviewerTokenized = tokenizer.encode(utterances[end_index][1])
@@ -647,10 +676,20 @@ def calculate_bert_score(goldLabels, generatedoutputs, decoderTokenizer):
 
 def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedTokenizer) -> Tuple[int, float]:
     """ Train the model """
-    if args.local_rank in [-1, 0]:
+
+    ################### The line below was being used when accelerate was not used for distributed training ########################
+    # if args.local_rank in [-1, 0]:
+    #     tb_writer = SummaryWriter()
+    #####################################################################################
+
+    #accelerator = Accelerator()
+    if accelerator.is_main_process:
         tb_writer = SummaryWriter()
 
-    args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
+    ############## The line below was present when distributed training was not being performed using accelerate #############
+    #args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
+    ##########################################################################################################################
+    args.train_batch_size = args.per_gpu_train_batch_size
 
     # Should use tokenizer's padding mechanism instead of own.
     def collate(examples: List[Tuple[List[int], List[int]]]):
@@ -670,7 +709,7 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
 
     train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
     train_dataloader = DataLoader(
-        train_dataset, sampler=train_sampler, batch_size=args.train_batch_size, collate_fn=collate, drop_last = True
+        train_dataset, sampler=train_sampler, batch_size=args.train_batch_size, collate_fn = collate, drop_last = True
     )
 
     if args.max_steps > 0:
@@ -679,7 +718,9 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
     else:
         t_total = len(train_dataloader) // args.gradient_accumulation_steps * args.num_train_epochs
 
-    model = model.module if hasattr(model, "module") else model  # Take care of distributed/parallel training
+    ############## The line below was present when distributed training was not being performed using accelerate #############
+    # model = model.module if hasattr(model, "module") else model  # Take care of distributed/parallel training
+    ##########################################################################################################################
     model.resize_token_embeddings(len(tokenizer))
     # add_special_tokens_(model, tokenizer)
 
@@ -716,26 +757,30 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
         model, optimizer = amp.initialize(model, optimizer, opt_level=args.fp16_opt_level)
 
     # multi-gpu training (should be after apex fp16 initialization)
-    if args.n_gpu > 1:
-        model = torch.nn.DataParallel(model)
+    ############## The line below was present when distributed training was not being performed using accelerate #############
+    # if args.n_gpu > 1:
+    #     model = torch.nn.DataParallel(model)
+    ##########################################################################################################################
 
     # Distributed training (should be after apex fp16 initialization)
-    if args.local_rank != -1:
-        model = torch.nn.parallel.DistributedDataParallel(
-            model, device_ids=[args.local_rank], output_device=args.local_rank, find_unused_parameters=True
-        )
+    ############## The line below was present when distributed training was not being performed using accelerate #############
+    # if args.local_rank != -1:
+    #     model = torch.nn.parallel.DistributedDataParallel(
+    #         model, device_ids=[args.local_rank], output_device=args.local_rank, find_unused_parameters=True
+    #     )
+    ##########################################################################################################################
 
     # Train!
     logger.info("***** Running training *****")
     logger.info("  Num examples = %d", len(train_dataset))
     logger.info("  Num Epochs = %d", args.num_train_epochs)
     logger.info("  Instantaneous batch size per GPU = %d", args.per_gpu_train_batch_size)
-    logger.info(
-        "  Total train batch size (w. parallel, distributed & accumulation) = %d",
-        args.train_batch_size
-        * args.gradient_accumulation_steps
-        * (torch.distributed.get_world_size() if args.local_rank != -1 else 1),
-    )
+    # logger.info(
+    #     "  Total train batch size (w. parallel, distributed & accumulation) = %d",
+    #     args.train_batch_size
+    #     * args.gradient_accumulation_steps
+    #     * (torch.distributed.get_world_size() if args.local_rank != -1 else 1),
+    # )
     logger.info("  Gradient Accumulation steps = %d", args.gradient_accumulation_steps)
     logger.info("  Total optimization steps = %d", t_total)
 
@@ -762,11 +807,19 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
 
     model.zero_grad()
     train_iterator = trange(
-        epochs_trained, int(args.num_train_epochs), desc="Epoch", disable=args.local_rank not in [-1, 0]
+        epochs_trained, int(args.num_train_epochs), desc="Epoch", disable = not accelerator.is_local_main_process
     )
     set_seed(args)  # Added here for reproducibility
+
+    
+    device = accelerator.device
+    model, optimizer, train_dataloader, scheduler = accelerator.prepare(
+    model, optimizer, train_dataloader, scheduler)
+    print("Printing GPU utilization just before training loop:")
+    print_gpu_utilization()
+
     for _ in train_iterator:
-        epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0])
+        epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable = not accelerator.is_local_main_process)
         for step, batch in enumerate(epoch_iterator):
 
             # Skip past any already trained steps if resuming training
@@ -774,79 +827,30 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
                 steps_trained_in_current_epoch -= 1
                 continue
 
-            # labels = []
-
-            # for example in batch:
-            #   example = reversed(example)
-            #   current_example = [tokenizer.eos_token_id]
-            #   ind = 1
-            #   while(ind<len(example)):
-            #     if(example[ind] == tokenizer.eos_token_id):
-            #       break
-            #     current_example.append(example[ind])
-            #     ind+=1
-            #   current_example+=[-100]*(len(example)-len(current_example))
-            #   current_example = reversed(current_example)
-            #   labels.append(current_example)
-
-            # Initialize an empty list to store labels
-
-            # labels = []
-            # attention_masks = []
-
-            #print("batch.size(): ", batch.size())
-            # Iterate over each example in the batch
-            # for example in batch:
-            #     # Reverse the example
-            #     #print("example: ", example)
-            #     example = torch.flip(example,[0])
-            #     # Find the indices of eos_token_id in the reversed example
-            #     eos_indices = [i for i, x in enumerate(example) if x == tokenizer.eos_token_id]
-            #     # Check if there are at least two occurrences of eos_token_id
-            #         # Get the index of the second occurrence of eos_token_id
-            #     idx0 = eos_indices[0]
-            #     idx1 = eos_indices[1]
-            #     # Create the current example list
-            #     current_example = torch.cat([torch.full((idx0,),-100),example[idx0:idx1]])
-            #     # Pad the current example list with -100
-            #     current_example = torch.cat([current_example, torch.full((len(example) - len(current_example),),-100)] )
-            #     attention_mask = torch.cat([torch.full((idx0,),0),torch.full((len(example) - idx0,),1)])
-
-            #     #current_example = torch.cat([current_example, torch.full((len(example) - len(current_example),),-100)] )
-            #     # Reverse the current example list
-            #     current_example = torch.flip(current_example,[0])
-            #     # print("len(example): ", len(example))
-            #     # print("len(current_example): ", len(current_example))
-
-            #     # Append the current example to labels
-            #     labels.append(current_example)
-            #     attention_masks.append(attention_mask)
-
-            # labels = torch.stack(labels)
-            # attention_masks = torch.stack(attention_masks)
-
-
-
-            # inputs = batch
-            # #inputs, labels = (batch, batch)
-            # if inputs.shape[1] > 1024: continue
-            # inputs = inputs.to(args.device)
-            # labels = labels.to(args.device)
-            # attention_masks = attention_masks.to(args.device)
             model.train()
 
             #This is wrong, should only compute loss for the response turn, here loss is being computed for every turn
             #outputs = model(inputs, labels=labels, attention_mask = attention_masks)
             inputs = batch[0]
             labels = batch[1]
-            inputs = inputs.to(args.device)
-            labels = labels.to(args.device)
+            ########### The 2 lines below were present when accelerate was not being used, use the lines below again if accelerate 
+            # is to be used####################
+
+            # inputs = inputs.to(args.device)
+            # labels = labels.to(args.device)
+            print(f"Printing GPU utilization just before forward pass for process {accelerator.process_index}:{print_gpu_utilization()}")
             outputs = model(inputs, labels=labels)
             loss = outputs[0]  # model outputs are always tuple in transformers (see doc)
             #print("********Printing loss: ", loss)
             #print()
-            if args.n_gpu > 1:
-                loss = loss.mean()  # mean() to average on multi-gpu parallel training
+
+            ############### The if condition below was present when distributed training was to be performed without using accelerate
+            # If distrinuted training is to be again performed without using accelerate, then the line below may be used again, please
+            # check that, I am not sure ##################################
+            
+            # if args.n_gpu > 1:
+            #     loss = loss.mean()  # mean() to average on multi-gpu parallel training
+            
             if args.gradient_accumulation_steps > 1:
                 loss = loss / args.gradient_accumulation_steps
 
@@ -854,7 +858,7 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
                 with amp.scale_loss(loss, optimizer) as scaled_loss:
                     scaled_loss.backward()
             else:
-                loss.backward()
+                accelerator.backward(loss)
 
             tr_loss += loss.item()
             #This if updates the parameters when the step number in the current batch is a multiple of gradient_accumulation_steps
@@ -862,14 +866,16 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
                 if args.fp16:
                     torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)
                 else:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                    #torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                    if accelerator.sync_gradients:
+                        accelerator.clip_grad_norm_(model.parameters(), args.max_grad_norm)
                 optimizer.step()
                 scheduler.step()  # Update learning rate schedule
                 model.zero_grad()
                 global_step += 1
 
                 # Logging when the current value of global_step is a multiple of args.logging_steps
-                if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
+                if accelerator.is_main_process and args.logging_steps > 0 and global_step % args.logging_steps == 0:
                     # Log metrics
                     if (
                         args.local_rank == -1 and args.evaluate_during_training
@@ -882,25 +888,35 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
                     tb_writer.add_scalar("loss", (tr_loss - logging_loss) / args.logging_steps, global_step)
                     logging_loss = tr_loss
 
-                if args.local_rank in [-1, 0] and args.save_steps > 0 and global_step % args.save_steps == 0:
+                if accelerator.is_main_process and args.save_steps > 0 and global_step % args.save_steps == 0:
                     checkpoint_prefix = "checkpoint"
                     # Save model checkpoint
                     output_dir = os.path.join(args.output_dir, "{}-{}".format(checkpoint_prefix, global_step))
                     os.makedirs(output_dir, exist_ok=True)
-                    model_to_save = (
-                        model.module if hasattr(model, "module") else model
-                    )  # Take care of distributed/parallel training
-                    model_to_save.save_pretrained(output_dir)
-                    tokenizer.save_pretrained(output_dir)
 
-                    torch.save(args, os.path.join(output_dir, "training_args.bin"))
+                    ################ The line below was being used when distributed training was being done without the use of 
+                    # accelerate ################
+
+                    # model_to_save = (
+                    #     model.module if hasattr(model, "module") else model
+                    # )  # Take care of distributed/parallel training
+
+                    model_to_save = accelerator.unwrap_model(model)
+                    model_to_save.save_pretrained(output_dir, 
+                                                  is_main_process=accelerator.is_main_process, 
+                                                  save_function=accelerator.save)
+                    tokenizer.save_pretrained(output_dir, 
+                                                  is_main_process=accelerator.is_main_process, 
+                                                  save_function=accelerator.save)
+
+                    accelerator.save(args, os.path.join(output_dir, "training_args.bin"))
                     logger.info("Saving model checkpoint to %s", output_dir)
 
                     # Delete excess checkpoints
                     _rotate_checkpoints(args, checkpoint_prefix)
 
-                    torch.save(optimizer.state_dict(), os.path.join(output_dir, "optimizer.pt"))
-                    torch.save(scheduler.state_dict(), os.path.join(output_dir, "scheduler.pt"))
+                    accelerator.save(optimizer.state_dict(), os.path.join(output_dir, "optimizer.pt"))
+                    accelerator.save(scheduler.state_dict(), os.path.join(output_dir, "scheduler.pt"))
                     logger.info("Saving optimizer and scheduler states to %s", output_dir)
 
             if args.max_steps > 0 and global_step > args.max_steps:
@@ -910,8 +926,13 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
             train_iterator.close()
             break
 
-    if args.local_rank in [-1, 0]:
+    # if args.local_rank in [-1, 0]:
+    #     tb_writer.close()
+
+    if accelerator.is_main_process:
         tb_writer.close()
+    
+    model = accelerator.unwrap_model(model)
 
     return global_step, tr_loss / global_step
 
@@ -924,7 +945,10 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, df_tr
 
     eval_dataset = load_and_cache_examples(args, tokenizer, df_trn, df_val, evaluate=True)
     os.makedirs(eval_output_dir, exist_ok=True)
-    args.eval_batch_size = args.per_gpu_eval_batch_size * max(1, args.n_gpu)
+    ################## This line was present when distributed training was not being performed using accelerate ##################
+    # args.eval_batch_size = args.per_gpu_eval_batch_size * max(1, args.n_gpu)
+
+    args.eval_batch_size = args.per_gpu_eval_batch_size
     # Note that DistributedSampler samples randomly
 
     def collate(examples: List[Tuple[List[int], List[int]]]):
@@ -950,9 +974,12 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, df_tr
         eval_dataset, sampler=eval_sampler, batch_size=args.eval_batch_size, collate_fn=collate, drop_last = True
     )
 
-    # multi-gpu evaluate
-    if args.n_gpu > 1:
-        model = torch.nn.DataParallel(model)
+    # multi-gpu evaluate    
+    ############## The line below was present when distributed training was not being performed using accelerate #############
+    # if args.n_gpu > 1:
+    #     model = torch.nn.DataParallel(model)
+    ##########################################################################################################################
+
 
     # Eval!
     logger.info("***** Running evaluation {} *****".format(prefix))
@@ -966,60 +993,10 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, df_tr
     generated_output = []
 
     for batch in tqdm(eval_dataloader, desc="Evaluating"):
-        # inputs, labels = (batch, batch)
-        # inputs = inputs.to(args.device)
-        # labels = labels.to(args.device)
-
-        # with torch.no_grad():
-        #     outputs = model(inputs, labels=labels)
-        #     #print("Outputs: ", outputs)
-        #     lm_loss = outputs[0]
-        #     # print("lm_loss: ", lm_loss)
-        #     # print("lm_loss.item(): ",lm_loss.item() )
-        #     # print("lm_loss.mean().item(): ",lm_loss.mean().item() )
-
-        #     #lm_loss.mean() meaningless, not needed
-        #     eval_loss += lm_loss.mean().item()
-        # nb_eval_steps += 1
-
-        # inputs = []
-        # attention_masks=[]
-
-        # for example in batch:
-        #   #print("Printing raw example: ", tokenizer.decode(example))
-        #   example = torch.flip(example,[0])
-        #   # Find the indices of eos_token_id in the reversed example
-        #   eos_indices = [i for i, x in enumerate(example) if x == tokenizer.eos_token_id]
-        #   # Check if there are at least two occurrences of eos_token_id
-
-        #   # Get the index of the second occurrence of eos_token_id
-        #   idx0 = eos_indices[0]
-        #   idx1 = eos_indices[1]
-        #   # Create the current example list
-        #   current_example = example[idx0+1:idx1]
-        #   # Pad the current example list with -100
-        #   remaining_example = example[idx1:]
-        #   # Reverse the current example list
-        #   current_example = torch.flip(current_example,[0])
-        #   remaining_example = torch.flip(remaining_example,[0])
-        #   attention_mask = torch.full((len(remaining_example),),1)
-
-        #   #print("Printing extracted label: ", tokenizer.decode(current_example))
-        #   if(len(current_example) ==0):
-        #     print("Empty label detected. eos_indices: ", eos_indices," full example: ", tokenizer.decode(torch.flip(example,[0])))
-        #   labels.append(current_example.tolist())
-        #   inputs.append(remaining_example)
-        #   attention_masks.append(attention_mask)
-
-        # inputs = pad_sequence(inputs, batch_first = True)
-        # attention_masks = pad_sequence(attention_masks, batch_first = True)
-        # print(attention_masks)
-        # print("Inputs: ", inputs)
 
         inputs = batch[0]
         labels = labels + batch[1]
         attention_masks = batch[2]
-
 
         device = torch.device(f'cuda:{args.device_id}')
         inputs = inputs.to(device)
@@ -1106,13 +1083,17 @@ def mainfun(df_trn, df_val):
         )
 
     # Setup CUDA, GPU & distributed training
-    device = torch.device(f'cuda:{args.device_id}')
-    ############### This has been manually set to 1 here, use the original line when doing multiple GPU training ###################
-    args.n_gpu = 1
-    ################# Original line #####################
-    #args.n_gpu = torch.cuda.device_count()
-    ####################################################
-    args.device = device
+    ############### The line below was present when no distributed training using accelerate was being done. Now, setting the device
+    # has been moved to train method.############################### 
+    
+    # device = torch.device(f'cuda:{args.device_id}')
+
+    args.n_gpu = torch.cuda.device_count()
+
+    ############### The line below was present when no distributed training using accelerate was being done. Now, setting the device
+    # has been moved to train method.############################### 
+    
+    # args.device = device
 
     # Setup logging
     logging.basicConfig(
@@ -1120,13 +1101,20 @@ def mainfun(df_trn, df_val):
         datefmt="%m/%d/%Y %H:%M:%S",
         level=logging.INFO if args.local_rank in [-1, 0] else logging.WARN,
     )
+    # logger.warning(
+    #     "Process rank: %s, device: %s, n_gpu: %s, distributed training: %s, 16-bits training: %s",
+    #     args.local_rank,
+    #     ############### The line below was present when no distributed training using accelerate was being done. Now, setting the device
+    #     # has been moved to train method.############################### 
+    #     # device,
+    #     args.n_gpu,
+    #     bool(args.local_rank != -1),
+    #     args.fp16,
+    # )
+
     logger.warning(
-        "Process rank: %s, device: %s, n_gpu: %s, distributed training: %s, 16-bits training: %s",
-        args.local_rank,
-        device,
-        args.n_gpu,
-        bool(args.local_rank != -1),
-        args.fp16,
+        "Process rank: %s, n_gpu: %s, distributed training: %s, 16-bits training: %s",
+        args.local_rank, args.n_gpu, bool(args.local_rank != -1), args.fp16,
     )
 
     # Set seed
@@ -1140,7 +1128,9 @@ def mainfun(df_trn, df_val):
         from_tf=False,
         config=config,
     )
-    model.to(args.device)
+    ############### The line below was present when no distributed training using accelerate was being done. Now, setting the device
+    # has been moved to train method.############################### 
+    # model.to(args.device)
 
     logger.info("Training/evaluation parameters %s", args)
 
@@ -1149,27 +1139,35 @@ def mainfun(df_trn, df_val):
         train_dataset = load_and_cache_examples(args, tokenizer, df_trn, df_val, evaluate=False)
 
         t1 = time.time()
+        
+        print("Printing gpu utilization before training for process {accelerator.process_index}:{print_gpu_utilization()}")
+        
         global_step, tr_loss = train(args, train_dataset, model, tokenizer)
         t2 = time.time()
-        os.makedirs(os.path.join(args.output_dir, 'results'), exist_ok = True)
-        loggingfilepath = os.path.join(args.output_dir, "results/time_results.txt")
-        with open(loggingfilepath, "w") as file:
-          # Write some text to the file
-          file.write("Training time: " + str(t2-t1))
-        logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
+        accelerator.wait_for_everyone()
+        if accelerator.is_main_process:
+            os.makedirs(os.path.join(args.output_dir, 'results'), exist_ok = True)
+            loggingfilepath = os.path.join(args.output_dir, "results/time_results.txt")
+            with open(loggingfilepath, "w") as file:
+                # Write some text to the file
+                file.write("Training time: " + str(t2-t1))
+            logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
 
     # Saving best-practices: if you use save_pretrained for the model and tokenizer, you can reload them using from_pretrained()
-    if args.do_train:
+    if args.do_train and accelerator.is_main_process:
         # Create output directory if needed
         os.makedirs(args.output_dir, exist_ok=True)
 
         logger.info("Saving model checkpoint to %s", args.output_dir)
         # Save a trained model, configuration and tokenizer using `save_pretrained()`.
         # They can then be reloaded using `from_pretrained()`
-        model_to_save = (
-            model.module if hasattr(model, "module") else model
-        )  # Take care of distributed/parallel training
-        model_to_save.save_pretrained(args.output_dir)
+
+        ############## The line below was being used when distributed training was not being performed using accelerate ############ 
+        # model_to_save = (
+        #     model.module if hasattr(model, "module") else model
+        # )  # Take care of distributed/parallel training
+        
+        model.save_pretrained(args.output_dir)
         tokenizer.save_pretrained(args.output_dir)
 
         # Good practice: save your training arguments together with the trained model
@@ -1178,7 +1176,7 @@ def mainfun(df_trn, df_val):
         # Load a trained model and vocabulary that you have fine-tuned
         model = AutoModelForCausalLM.from_pretrained(args.output_dir)
         tokenizer = AutoTokenizer.from_pretrained(args.output_dir)
-        model.to(args.device)
+        #model.to(args.device)
 
 def evaluation_caller(df_val, df_trn, setting):
     device = torch.device(f'cuda:{args.device_id}')
@@ -1243,14 +1241,16 @@ SZ_SC1_val_df = torch.load(os.path.join(args.output_dir, 'SZ_SC1_val.pkl'))
 SZ_SC2_val_df = torch.load(os.path.join(args.output_dir, 'SZ_SC2_val.pkl'))
 
 #Call main to train model
-#mainfun(trn_df, BD_SC1_val_df)
+if args.do_train:
+    mainfun(trn_df, BD_SC1_val_df)
 
-print("Final result of BD Scene1: ", evaluation_caller(BD_SC1_val_df, trn_df, "BD Scene 1"))
-print("Final result of BD Scene2: ", evaluation_caller(BD_SC2_val_df, trn_df, "BD Scene 2"))
-print("Final result of HC Scene1: ", evaluation_caller(HC_SC1_val_df, trn_df, "HC Scene 1"))
-print("Final result of HC Scene2: ", evaluation_caller(HC_SC2_val_df, trn_df, "HC Scene 2"))
-print("Final result of SZ Scene1: ", evaluation_caller(SZ_SC1_val_df, trn_df, "SZ Scene 1"))
-print("Final result of SZ Scene2: ", evaluation_caller(SZ_SC2_val_df, trn_df, "SZ Scene 2"))
+if args.do_eval and accelerator.is_main_process:
+    print("Final result of BD Scene1: ", evaluation_caller(BD_SC1_val_df, trn_df, "BD Scene 1"))
+    print("Final result of BD Scene2: ", evaluation_caller(BD_SC2_val_df, trn_df, "BD Scene 2"))
+    print("Final result of HC Scene1: ", evaluation_caller(HC_SC1_val_df, trn_df, "HC Scene 1"))
+    print("Final result of HC Scene2: ", evaluation_caller(HC_SC2_val_df, trn_df, "HC Scene 2"))
+    print("Final result of SZ Scene1: ", evaluation_caller(SZ_SC1_val_df, trn_df, "SZ Scene 1"))
+    print("Final result of SZ Scene2: ", evaluation_caller(SZ_SC2_val_df, trn_df, "SZ Scene 2"))
 
 """## Chatting with  LLM assistant
 
