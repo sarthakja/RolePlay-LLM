@@ -29,11 +29,18 @@ login(hf_api_token)
 
 
 # Replace meta-llama/Llama-2-7b-chat-hf with any other LLM trained with Causal LM objective
-tokenizer = AutoTokenizer.from_pretrained("TinyLlama/TinyLlama-1.1B-Chat-v1.0")
+#TinyLlama/TinyLlama-1.1B-Chat-v1.0
+# facebook/blenderbot-400M-distill
+#google/flan-t5-large
+#google-t5/t5-base
+# google-t5/t5-large
+# microsoft/DialoGPT-large
+tokenizer = AutoTokenizer.from_pretrained("microsoft/DialoGPT-large")
 #print("Tokenizer assigned")
-model = AutoModelForCausalLM.from_pretrained("TinyLlama/TinyLlama-1.1B-Chat-v1.0")
+
+#model = AutoModelForCausalLM.from_pretrained("facebook/blenderbot-400M-distill")
 tokenizer.pad_token = '[PAD]'
-accelerator = Accelerator(rng_types=["torch", "cuda", "generator"])
+
 
 # Check if GPU is available
 if torch.cuda.is_available():
@@ -104,7 +111,9 @@ from transformers import (
     PreTrainedModel,
     PreTrainedTokenizer,
     get_linear_schedule_with_warmup,
-    AutoModelForCausalLM
+    AutoModelForCausalLM,
+    BlenderbotForConditionalGeneration,
+    T5ForConditionalGeneration
 )
 
 
@@ -123,21 +132,23 @@ def print_gpu_utilization():
     nvmlInit()
     handle = nvmlDeviceGetHandleByIndex(accelerator.process_index)
     info = nvmlDeviceGetMemoryInfo(handle)
-    print(f"GPU memory occupied: {info.used//1024**2} MB.")
+    memory_usage = info.used//1024**2
+    return memory_usage
+    # print(f"GPU memory occupied: {info.used//1024**2} MB.")
 
 """# **Set the arguments here**"""
 
 # Args to allow for easy convertion of python script to notebook
 class Args():
     def __init__(self):
-        self.output_dir = './TinyLlama-1.1B-Chat-v1.0'  # set the output directory here
-        self.model_type = 'TinyLlama/TinyLlama-1.1B-Chat-v1.0' # set the model type here
-        self.model_name_or_path = 'TinyLlama/TinyLlama-1.1B-Chat-v1.0' # set the model id here
-        self.config_name = 'TinyLlama/TinyLlama-1.1B-Chat-v1.0'
-        self.tokenizer_name = 'TinyLlama/TinyLlama-1.1B-Chat-v1.0' # set the tokenizer name here
+        self.output_dir = './DialoGPT-large'  # set the output directory here
+        self.model_type = 'microsoft/DialoGPT-large' # set the model type here
+        self.model_name_or_path = 'microsoft/DialoGPT-large' # set the model id here
+        self.config_name = 'microsoft/DialoGPT-large'
+        self.tokenizer_name = 'microsoft/DialoGPT-large' # set the tokenizer name here
         self.cache_dir = './cached' # set the path to cache directory here
         self.block_size = 512
-        self.do_train = False
+        self.do_train = True
         self.do_eval = True
         self.evaluate_during_training = False
         self.per_gpu_train_batch_size = 1
@@ -151,7 +162,7 @@ class Args():
         self.max_steps = -1
         self.warmup_steps = 0
         self.logging_steps = 1000
-        self.save_steps = 33000
+        self.save_steps = 4109
         self.save_total_limit = 1
         self.eval_all_checkpoints = False
         self.no_cuda = False
@@ -170,13 +181,27 @@ class Args():
         self.SZ_Scene1 = './dataset/SZ_SC_1' # Schizophrenia Scene 1
         self.SZ_Scene2 = './dataset/SZ_SC_2' # Schizophrenia Scene 2
         self.test_size = 0.20
-        self.context_size = 800
-        self.new_tokens = 50
+        self.context_size = 1024
+        self.new_tokens = 100
         self.device_id = 1
         self.create_dataframe = False
-
+        self.should_perform_lora_training = False
+        self.should_perform_gradient_checkpointing = False
+        self.lora_rank = 6
+        self.generate_transcript = True
+        self.promptStringNeighbor = "I want you to roleplay a neighbor who has moved in to a new neighborhood. If your neighbor's utterance are related to the utterance you have already seen, please try to reuse the original response lines."
+        # self.promptStringNeighbor = "I want you to roleplay a neighbor who has moved in to a new neighborhood and conversing with a neighbor in your building. If your neighbor's utterance are related to the utterance you have already seen, please try to reuse the original response lines. You should respond in a friendly but reserved manner. In answering the user's questions, it is important to respond appropriately but to keep the responses brief. Do not lead the subject with questions. In this role-play it is the user's task to keep the conversation going."
+        # self.promptStringNeighbor = "Neighbor"
+        self.promptStringLandlord = "I want you to roleplay a landlord who is conversing with a tenant. If your tenant's utterance are related to the utterance you have already seen, please try to reuse the original response lines. The situation is that tenant had complained to you about a leak earlier but that has not been fixed yet."
+        # self.promptStringLandlord = "I want you to roleplay a landlord who is conversing with a tenant. If your tenant's utterance are related to the utterance you have already seen, please try to reuse the original response lines. The situation is that tenant had complained to you about a leak earlier but that has not been fixed yet. You should respond to the subject in a professional and direct manner, but you should avoid reaching an easy compromise. Also, you your responses should not be too long. You should employ stalling tactics and give excuses to not fix the problem."
+        # self.promptStringLandlord = "Landlord"
 
 args = Args()
+
+if(args.fp16):
+    accelerator = Accelerator(rng_types=["torch", "cuda", "generator"], mixed_precision="fp16")
+else:
+    accelerator = Accelerator(rng_types=["torch", "cuda", "generator"])
 
 print(args.save_steps)
 
@@ -228,6 +253,8 @@ if args.create_dataframe and accelerator.is_main_process:
     torch.save(HC_SC2_val_df, os.path.join(args.output_dir, 'HC_SC2_val.pkl'))
     torch.save(SZ_SC1_val_df, os.path.join(args.output_dir, 'SZ_SC1_val.pkl'))
     torch.save(SZ_SC2_val_df, os.path.join(args.output_dir, 'SZ_SC2_val.pkl'))
+
+accelerator.wait_for_everyone()
 
 # print(len(trn_df))
 # print(len(val_df))
@@ -299,7 +326,9 @@ def updateDatasetListEvaluate(chat, utterances, end_index, tokenizer, datasetLis
 
    tokenized_chat = tokenizer.apply_chat_template(chat, tokenize=True, add_generation_prompt=True) 
    updateChat(chat, utterances[end_index])
-   interviewerTokenized = tokenizer.encode(utterances[end_index][1])
+   interviewerTokenized = tokenizer.encode(utterances[end_index][1]) + [tokenizer.eos_token_id]
+   #if(len(tokenized_chat + interviewerTokenized)>args.context_size):
+       
    datasetList.append((tokenized_chat, interviewerTokenized))
 
       
@@ -396,7 +425,7 @@ def constructConvDataset(filepath, prompt_string, tokenizer, isTrain):
   if(end_index == 0):
       updateChat(chat, utterances[end_index])
 
-  if(isTrain and end_index > 0): 
+  if(isTrain and end_index > 0 and not (args.model_name_or_path == 'facebook/blenderbot-400M-distill' or args.model_name_or_path == 'google/flan-t5-large' or args.model_name_or_path == 'google-t5/t5-base' or args.model_name_or_path == 'google-t5/t5-large') ): 
     l1 = len(tokenizer.apply_chat_template(chat, tokenize=True, add_generation_prompt=False))
 
     updateChat(chat, utterances[end_index])
@@ -414,9 +443,9 @@ def constructConvDataset(filepath, prompt_string, tokenizer, isTrain):
   
   #datasetList.append(utterance_list)
 
-  end_index+=2
+  end_index += 2
   while(end_index<len(utterances)):
-    if(isTrain):
+    if(isTrain and not (args.model_name_or_path == 'facebook/blenderbot-400M-distill' or args.model_name_or_path == 'google/flan-t5-large' or args.model_name_or_path == 'google-t5/t5-base' or args.model_name_or_path == 'google-t5/t5-large')):
         updateDatasetList(chat, utterances, end_index, tokenizer, datasetList)
     else:
         updateDatasetListEvaluate(chat, utterances, end_index, tokenizer, datasetList)
@@ -452,8 +481,8 @@ def constructConvDataset(filepath, prompt_string, tokenizer, isTrain):
 
 """Set the Neighbor and Landlord prompts"""
 
-promptStringNeighbor = "I want you to roleplay a neighbor who has moved in to a new neighborhood. If your neighbor's utterance are related to the utterance you have already seen, please try to reuse the original response lines."
-promptStringLandlord = "I want you to roleplay a landlord who is conversing with a tenant. If your tenant's utterance are related to the utterance you have already seen, please try to reuse the original response lines. The situation is that tenant had complained to you about a leak earlier but that has not been fixed yet."
+# promptStringNeighbor = "I want you to roleplay a neighbor who has moved in to a new neighborhood. If your neighbor's utterance are related to the utterance you have already seen, please try to reuse the original response lines."
+# promptStringLandlord = "I want you to roleplay a landlord who is conversing with a tenant. If your tenant's utterance are related to the utterance you have already seen, please try to reuse the original response lines. The situation is that tenant had complained to you about a leak earlier but that has not been fixed yet."
 
 
 # Given a row(list of list of strings, where each string is a dialogue in a turn. The order of dialogues in the row is
@@ -499,10 +528,10 @@ class ConversationDataset(Dataset):
             for fil in df:
               if("Scene 1" in fil):
                 #print(fil)
-                conv_list = constructConvDataset(fil, promptStringNeighbor, tokenizer, isTrain)
+                conv_list = constructConvDataset(fil, args.promptStringNeighbor, tokenizer, isTrain)
                 self.examples += conv_list
               else:
-                conv_list = constructConvDataset(fil, promptStringLandlord, tokenizer, isTrain)
+                conv_list = constructConvDataset(fil, args.promptStringLandlord, tokenizer, isTrain)
                 self.examples += conv_list
 
             logger.info("Saving features into cached file %s", cached_features_file)
@@ -537,7 +566,7 @@ def set_seed(args):
 # "checkpoint-1", and "checkpoint-2", then the function will return a list of checkpoint file names:
 # ["checkpoint-1", "checkpoint-2"]
 
-def _sorted_checkpoints(args, checkpoint_prefix="checkpoint", use_mtime=False) -> List[str]:
+def _sorted_checkpoints(args, checkpoint_prefix="checkpoint", use_mtime=True) -> List[str]:
     ordering_and_checkpoint_path = []
 
     glob_checkpoints = glob.glob(os.path.join(args.output_dir, "{}-*".format(checkpoint_prefix)))
@@ -556,7 +585,7 @@ def _sorted_checkpoints(args, checkpoint_prefix="checkpoint", use_mtime=False) -
 
 # This method deletes checkpoints if the number of checkpoints in the directory given by args.output_dir
 # are greater than the number given by args.save_total_limit
-def _rotate_checkpoints(args, checkpoint_prefix="checkpoint", use_mtime=False) -> None:
+def _rotate_checkpoints(args, checkpoint_prefix="checkpoint", use_mtime=True) -> None:
     if not args.save_total_limit:
         return
     if args.save_total_limit <= 0:
@@ -611,16 +640,24 @@ def calculate_cosine(goldLabels, generatedoutputs, decoderTokenizer):
   return torch.mean(torch.nn.functional.cosine_similarity(goldOutputEmbedding, generatedOutputEmbedding))
 
 #goldLabels, and generatedoutputs are lists of token ids that are passed during the evaluate method
-def calculate_rouge(goldLabels, generatedoutputs, decoderTokenizer):
+def calculate_rouge(goldLabels, generatedoutputs, decoderTokenizer, setting):
   goldLabelsdecoded = list(map(lambda l: decoderTokenizer.decode(l,skip_special_tokens = True), goldLabels ))
   generatedDecoded =  list(map(lambda l: decoderTokenizer.decode(l,skip_special_tokens = True), generatedoutputs ))
 
   # print(goldLabelsdecoded[0:3])
   # print(generatedDecoded[0:3])
   rouge = ROUGEScore(rouge_keys=('rouge1', 'rougeL'))
+
+  os.makedirs(os.path.join(args.output_dir, 'results'), exist_ok = True)
+  filname = 'results/' + setting + '.txt'
+  savepath = os.path.join(args.output_dir,filname)
+  newl = list(zip(goldLabelsdecoded, generatedDecoded))
+  with open(savepath, "w") as file:
+    # Write some text to the file
+    file.write(str(newl))
   
-  print("In Calculate rouge, goldLabelsDecoded: ", goldLabelsdecoded)
-  print("In Calculate rouge, generatedDecoded: ", generatedDecoded)
+#   print("In Calculate rouge, goldLabelsDecoded: ", goldLabelsdecoded)
+#   print("In Calculate rouge, generatedDecoded: ", generatedDecoded)
 
   return rouge(generatedDecoded, goldLabelsdecoded)
 
@@ -683,6 +720,8 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
     #####################################################################################
 
     #accelerator = Accelerator()
+
+
     if accelerator.is_main_process:
         tb_writer = SummaryWriter()
 
@@ -695,13 +734,17 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
     def collate(examples: List[Tuple[List[int], List[int]]]):
         completeConversations = []
         maskedConversations = []
+        attention_masks = []
         for tup in examples:
             completeConversations.append(torch.tensor(tup[0], dtype = torch.long))
+            attention_mask = torch.full((len(tup[0]),),1)
+            attention_masks.append(attention_mask)
             maskedConversations.append(torch.tensor(tup[1], dtype = torch.long))
         
+        attention_masks = pad_sequence(attention_masks, batch_first = True, padding_value = 0)
         completeConversationPadded = pad_sequence(completeConversations, batch_first = True, padding_value = tokenizer.pad_token_id)
         maskedConversationPadded = pad_sequence(maskedConversations, batch_first = True, padding_value = -100)
-        return (completeConversationPadded, maskedConversationPadded)
+        return (completeConversationPadded, maskedConversationPadded, attention_masks)
 
         # if tokenizer._pad_token is None:
         #     return pad_sequence(examples, batch_first=True)
@@ -749,12 +792,12 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
         optimizer.load_state_dict(torch.load(os.path.join(args.model_name_or_path, "optimizer.pt")))
         scheduler.load_state_dict(torch.load(os.path.join(args.model_name_or_path, "scheduler.pt")))
 
-    if args.fp16:
-        try:
-            from apex import amp
-        except ImportError:
-            raise ImportError("Please install apex from https://www.github.com/nvidia/apex to use fp16 training.")
-        model, optimizer = amp.initialize(model, optimizer, opt_level=args.fp16_opt_level)
+    # if args.fp16:
+    #     try:
+    #         from apex import amp
+    #     except ImportError:
+    #         raise ImportError("Please install apex from https://www.github.com/nvidia/apex to use fp16 training.")
+    #     model, optimizer = amp.initialize(model, optimizer, opt_level=args.fp16_opt_level)
 
     # multi-gpu training (should be after apex fp16 initialization)
     ############## The line below was present when distributed training was not being performed using accelerate #############
@@ -813,10 +856,19 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
 
     
     device = accelerator.device
+    if(args.should_perform_gradient_checkpointing):
+        model.gradient_checkpointing_enable()
+    
+    if(args.should_perform_lora_training):
+        peft_config = LoraConfig(
+        task_type=TaskType.CAUSAL_LM, inference_mode=False, r=args.lora_rank, lora_alpha=32, lora_dropout=0.1, target_modules=["q_proj", "v_proj", "k_proj"]
+        )
+        model = get_peft_model(model, peft_config)
+        print(f"Printing trainable parameters for process {accelerator.process_index}:", {model.print_trainable_parameters()})
     model, optimizer, train_dataloader, scheduler = accelerator.prepare(
     model, optimizer, train_dataloader, scheduler)
-    print("Printing GPU utilization just before training loop:")
-    print_gpu_utilization()
+    print(f"Printing GPU utilization just before training loop for process {accelerator.process_index}: {print_gpu_utilization()} MB")
+    # print_gpu_utilization()
 
     for _ in train_iterator:
         epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable = not accelerator.is_local_main_process)
@@ -833,13 +885,18 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
             #outputs = model(inputs, labels=labels, attention_mask = attention_masks)
             inputs = batch[0]
             labels = batch[1]
+            att_mask = batch[2]
             ########### The 2 lines below were present when accelerate was not being used, use the lines below again if accelerate 
             # is to be used####################
 
             # inputs = inputs.to(args.device)
             # labels = labels.to(args.device)
-            print(f"Printing GPU utilization just before forward pass for process {accelerator.process_index}:{print_gpu_utilization()}")
-            outputs = model(inputs, labels=labels)
+            if accelerator.is_main_process and step % 100 == 0:
+                print(f"Printing GPU utilization just before forward pass for process {accelerator.process_index}:", print_gpu_utilization())
+            # print(f"Just before forward pass, input shape: {inputs.shape}")
+            # print(f"Just before forward pass, labels shape: {labels.shape}")
+            # print(f"Just before forward pass, att_mask shape: {att_mask.shape}")
+            outputs = model(inputs,  attention_mask = att_mask, labels=labels)
             loss = outputs[0]  # model outputs are always tuple in transformers (see doc)
             #print("********Printing loss: ", loss)
             #print()
@@ -854,21 +911,24 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
             if args.gradient_accumulation_steps > 1:
                 loss = loss / args.gradient_accumulation_steps
 
-            if args.fp16:
-                with amp.scale_loss(loss, optimizer) as scaled_loss:
-                    scaled_loss.backward()
-            else:
-                accelerator.backward(loss)
+            # if args.fp16:
+            #     with amp.scale_loss(loss, optimizer) as scaled_loss:
+            #         scaled_loss.backward()
+            # else:
+            #     accelerator.backward(loss)
+            accelerator.backward(loss)
 
             tr_loss += loss.item()
             #This if updates the parameters when the step number in the current batch is a multiple of gradient_accumulation_steps
             if (step + 1) % args.gradient_accumulation_steps == 0:
-                if args.fp16:
-                    torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)
-                else:
-                    #torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
-                    if accelerator.sync_gradients:
-                        accelerator.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                # if args.fp16:
+                #     torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)
+                # else:
+                #     #torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                #     if accelerator.sync_gradients:
+                #         accelerator.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                if accelerator.sync_gradients:
+                    accelerator.clip_grad_norm_(model.parameters(), args.max_grad_norm)
                 optimizer.step()
                 scheduler.step()  # Update learning rate schedule
                 model.zero_grad()
@@ -934,12 +994,12 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
     
     model = accelerator.unwrap_model(model)
 
-    return global_step, tr_loss / global_step
+    return global_step, tr_loss / global_step, model
 
 # Evaluation of some model.
 # Need to change this to incorporate our evaluation metrics
 
-def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, df_trn, df_val, prefix="") -> Dict:
+def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, df_trn, df_val, setting, prefix="") -> Dict:
     # Loop to handle MNLI double evaluation (matched, mis-matched)
     eval_output_dir = args.output_dir # output-small
 
@@ -998,18 +1058,22 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, df_tr
         labels = labels + batch[1]
         attention_masks = batch[2]
 
-        device = torch.device(f'cuda:{args.device_id}')
+        device = torch.device(f'cuda:{accelerator.process_index}')
         inputs = inputs.to(device)
         # if(inputs.size()[-1]>1024):
         #   print(inputs)
         #print("Before: ", inputs.size())
         attention_masks = attention_masks.to(device)
-        generated_outputs = model.generate(inputs, max_new_tokens = 50, attention_mask = attention_masks, pad_token_id=tokenizer.eos_token_id)
+        print(f"Printing gpu utilization before model.generate for process {accelerator.process_index}:{print_gpu_utilization()} MB")
+        generated_outputs = model.generate(inputs, max_new_tokens = args.new_tokens, attention_mask = attention_masks, pad_token_id=tokenizer.eos_token_id)
         # print("inputs[0:3]: ", inputs[0:3])
         # print("generated_outputs[0:3]: ", generated_outputs[0:3])
         #print("After: ", generated_outputs.size())
         #print("Before shortening: ", list(map(lambda l: tokenizer.decode(l, skip_special_tokens = True), generated_outputs )))
-        generated_outputs = list(map(lambda l1,l2: l2[len(l1):], inputs, generated_outputs))
+        if(not(args.model_name_or_path == 'google/flan-t5-large' or args.model_name_or_path == 'facebook/blenderbot-400M-distill' or args.model_name_or_path == 'google-t5/t5-base' or args.model_name_or_path == 'google-t5/t5-large')):
+            generated_outputs = list(map(lambda l1, l2: l2[len(l1):], inputs, generated_outputs))
+        else:
+            generated_outputs = [generated_outputs[i] for i in range(generated_outputs.shape[0])]
         #print("After shortening: ", list(map(lambda l: tokenizer.decode(l, skip_special_tokens = True), generated_outputs )))
         #generated_outputs = generated_outputs.tolist()
         generated_output = generated_output + generated_outputs
@@ -1030,7 +1094,7 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, df_tr
     # print("Printing labels: ", list(map(lambda l: tokenizer.decode(l, skip_special_tokens = True), labels )))
     # print("Printing generated_output: ", list(map(lambda l: tokenizer.decode(l, skip_special_tokens = True), generated_output )))
     #print("In evaluation caller, generated_output: ", generated_output)
-    rouge_value = calculate_rouge(labels, generated_output, tokenizer)
+    rouge_value = calculate_rouge(labels, generated_output, tokenizer, setting)
     print("Rouge calculated")
     bertscore_value = calculate_bert_score(labels, generated_output, tokenizer)
     print("Bertscore calculated")
@@ -1122,12 +1186,41 @@ def mainfun(df_trn, df_val):
 
     config = AutoConfig.from_pretrained(args.config_name)
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name)
-    tokenizer.pad_token = '[PAD]'
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model_name_or_path,
+    if(tokenizer.pad_token is None):
+        tokenizer.pad_token = '[PAD]'
+    if (args.model_name_or_path == 'facebook/blenderbot-400M-distill' or args.model_name_or_path == 'google/flan-t5-large' or args.model_name_or_path == 'google-t5/t5-base' or args.model_name_or_path == 'google-t5/t5-large'):
+        jinja_template_str = """
+        {%- for message in messages %}
+            {%- if message['role'] == 'user' %}
+                {{- ' ' }}
+            {%- endif %}
+            {{- message['content'] }}
+            {%- if not loop.last %}
+                {{- '  ' }}
+            {%- endif %}
+            {%- if message['role']=='assistant' and loop.last %}
+                {{- eos_token}}
+            {%- endif %}
+        {%- endfor %}
+        """
+
+        tokenizer.chat_template = jinja_template_str
+    if args.model_name_or_path == 'facebook/blenderbot-400M-distill':
+        model = BlenderbotForConditionalGeneration.from_pretrained(args.model_name_or_path,
         from_tf=False,
         config=config,
-    )
+        )
+    elif (args.model_name_or_path == 'google/flan-t5-large' or args.model_name_or_path == 'google-t5/t5-base' or args.model_name_or_path == 'google-t5/t5-large'):
+        model = T5ForConditionalGeneration.from_pretrained(args.model_name_or_path,
+        from_tf=False,
+        config=config,
+        )
+    else:
+        model = AutoModelForCausalLM.from_pretrained(
+            args.model_name_or_path,
+            from_tf=False,
+            config=config,
+        )
     ############### The line below was present when no distributed training using accelerate was being done. Now, setting the device
     # has been moved to train method.############################### 
     # model.to(args.device)
@@ -1140,11 +1233,12 @@ def mainfun(df_trn, df_val):
 
         t1 = time.time()
         
-        print("Printing gpu utilization before training for process {accelerator.process_index}:{print_gpu_utilization()}")
+        print(f"Printing gpu utilization before training for process {accelerator.process_index}:{print_gpu_utilization()} MB")
         
-        global_step, tr_loss = train(args, train_dataset, model, tokenizer)
-        t2 = time.time()
+        global_step, tr_loss, model = train(args, train_dataset, model, tokenizer)
         accelerator.wait_for_everyone()
+        t2 = time.time()
+        
         if accelerator.is_main_process:
             os.makedirs(os.path.join(args.output_dir, 'results'), exist_ok = True)
             loggingfilepath = os.path.join(args.output_dir, "results/time_results.txt")
@@ -1157,6 +1251,8 @@ def mainfun(df_trn, df_val):
     if args.do_train and accelerator.is_main_process:
         # Create output directory if needed
         os.makedirs(args.output_dir, exist_ok=True)
+        finetuned_model_directory = os.path.join(args.output_dir, "finetuned_model")
+        os.makedirs(finetuned_model_directory, exist_ok = True)
 
         logger.info("Saving model checkpoint to %s", args.output_dir)
         # Save a trained model, configuration and tokenizer using `save_pretrained()`.
@@ -1167,24 +1263,49 @@ def mainfun(df_trn, df_val):
         #     model.module if hasattr(model, "module") else model
         # )  # Take care of distributed/parallel training
         
-        model.save_pretrained(args.output_dir)
+        model.save_pretrained(finetuned_model_directory)
         tokenizer.save_pretrained(args.output_dir)
 
         # Good practice: save your training arguments together with the trained model
         torch.save(args, os.path.join(args.output_dir, "training_args.bin"))
 
         # Load a trained model and vocabulary that you have fine-tuned
-        model = AutoModelForCausalLM.from_pretrained(args.output_dir)
+        if(args.should_perform_lora_training):
+            if args.model_name_or_path == 'facebook/blenderbot-400M-distill':
+                model = BlenderbotForConditionalGeneration.from_pretrained(
+                    args.model_name_or_path,
+                    from_tf=False,
+                    config=config,
+                )
+            elif (args.model_name_or_path == 'google/flan-t5-large' or args.model_name_or_path == 'google-t5/t5-base' or args.model_name_or_path == 'google-t5/t5-large'):
+                model = T5ForConditionalGeneration.from_pretrained(args.model_name_or_path,
+                from_tf=False,
+                config=config,
+                )
+            else:
+                model = AutoModelForCausalLM.from_pretrained(
+                args.model_name_or_path,
+                from_tf=False,
+                config=config,
+                )
+            model = PeftModel.from_pretrained(model, finetuned_model_directory)
+        else:
+            if args.model_name_or_path == 'facebook/blenderbot-400M-distill':
+                model = BlenderbotForConditionalGeneration.from_pretrained(finetuned_model_directory)
+            elif (args.model_name_or_path == 'google/flan-t5-large' or args.model_name_or_path == 'google-t5/t5-base' or args.model_name_or_path == 'google-t5/t5-large'):
+                model = T5ForConditionalGeneration.from_pretrained(finetuned_model_directory)
+            else:
+                model = AutoModelForCausalLM.from_pretrained(finetuned_model_directory)
         tokenizer = AutoTokenizer.from_pretrained(args.output_dir)
         #model.to(args.device)
 
 def evaluation_caller(df_val, df_trn, setting):
-    device = torch.device(f'cuda:{args.device_id}')
+    device = torch.device(f'cuda:{accelerator.process_index}')
 
-    ############### This has been manually set to 1 here, use the original line when doing multi - GPU training ###################
+    ############### This has been manually set to 1 here, use the original line when doing multi - GPU inference ###################
     args.n_gpu = 1
     ################# Original line #####################
-    #args.n_gpu = torch.cuda.device_count()
+    # args.n_gpu = torch.cuda.device_count()
     ######################################################
 
     args.device = device
@@ -1202,11 +1323,40 @@ def evaluation_caller(df_val, df_trn, setting):
             global_step = checkpoint.split("-")[-1] if len(checkpoints) > 1 else ""
             prefix = checkpoint.split("/")[-1] if checkpoint.find("checkpoint") != -1 else ""
 
-            model = AutoModelForCausalLM.from_pretrained(checkpoint)
+            config = AutoConfig.from_pretrained(args.config_name)
+            # model = AutoModelForCausalLM.from_pretrained(checkpoint)
+            finetuned_model_directory = os.path.join(args.output_dir, "finetuned_model")
+            if(args.should_perform_lora_training):
+                if args.model_name_or_path == 'facebook/blenderbot-400M-distill':
+                    model = BlenderbotForConditionalGeneration.from_pretrained(
+                    args.model_name_or_path,
+                    from_tf=False,
+                    config=config,
+                    )
+                elif (args.model_name_or_path == 'google/flan-t5-large' or args.model_name_or_path == 'google-t5/t5-base' or args.model_name_or_path == 'google-t5/t5-large'):
+                    model = T5ForConditionalGeneration.from_pretrained(args.model_name_or_path,
+                    from_tf=False,
+                    config=config,
+                    )
+                else:
+                    model = AutoModelForCausalLM.from_pretrained(
+                    args.model_name_or_path,
+                    from_tf=False,
+                    config=config,
+                    )
+                
+                model = PeftModel.from_pretrained(model, finetuned_model_directory)
+            else:
+                if args.model_name_or_path == 'facebook/blenderbot-400M-distill':
+                    model = BlenderbotForConditionalGeneration.from_pretrained(finetuned_model_directory)
+                elif (args.model_name_or_path == 'google/flan-t5-large' or args.model_name_or_path == 'google-t5/t5-base' or args.model_name_or_path == 'google-t5/t5-large'):
+                    model = T5ForConditionalGeneration.from_pretrained(finetuned_model_directory)
+                else:
+                    model = AutoModelForCausalLM.from_pretrained(finetuned_model_directory)
             model.to(args.device)
             tokenizer = AutoTokenizer.from_pretrained(checkpoint)
             #tokenizer.to(args.device)
-            result = evaluate(args, model, tokenizer, df_trn, df_val, prefix=prefix)
+            result = evaluate(args, model, tokenizer, df_trn, df_val, setting, prefix=prefix)
             result = dict((k + "_{}".format(global_step), v) for k, v in result.items())
             results.update(result)
 
@@ -1240,6 +1390,7 @@ HC_SC2_val_df = torch.load(os.path.join(args.output_dir, 'HC_SC2_val.pkl'))
 SZ_SC1_val_df = torch.load(os.path.join(args.output_dir, 'SZ_SC1_val.pkl'))
 SZ_SC2_val_df = torch.load(os.path.join(args.output_dir, 'SZ_SC2_val.pkl'))
 
+
 #Call main to train model
 if args.do_train:
     mainfun(trn_df, BD_SC1_val_df)
@@ -1256,6 +1407,163 @@ if args.do_eval and accelerator.is_main_process:
 
 The model is ready, so it's time to chat with it.
 """
+
+def generateConversation(model, tokenizer, df_val, setting):
+    dirpath = os.path.join(args.output_dir, 'results/model_generated_output', setting)
+    os.makedirs(dirpath, exist_ok = True)
+    for filepath in df_val:
+        utterances = []  # This is a list of 2-tuples of (int, string), where the integer in the tuple represents if the
+                   # string is of interviewer(1) or patient(0). Each string represents either patient's turn or the
+                   # interviewer's turn
+        current_utterance = ''  # Variable to store the current utterance
+        current_label = None  # Variable to store the current label (0 for patient, 1 for interviewer)
+        end_of_conversation = False  # Flag to indicate if the end cue is encountered
+
+        # Open the text file for reading
+        with open(filepath, 'r', encoding='utf-8') as file:
+            # Iterate over each line in the file
+            for line in file:
+                #print("line: ", line)
+                line = line.strip()  # Remove leading/trailing whitespaces
+                if end_of_conversation:  # Stop parsing if the end cue is encountered
+                    break
+                elif re.match(r'^#+.*', line):  # Check if the line contains '#' characters
+                    end_of_conversation = True  # Set the flag if the end cue is encountered
+                    continue
+                elif line.startswith('Interviewer:'):
+                    if (current_utterance and (current_label == 0) ):  # If there's a previous utterance, store it
+                        utterances.append((current_label, current_utterance))
+                        current_utterance = line[len('Interviewer:'):].strip()  # Extract the utterance text
+                    elif(current_utterance and (current_label == 1)):
+                        current_utterance += ' ' + line[len('Interviewer:'):].strip()  # Extract the utterance text
+                    else:
+                        current_utterance = line[len('Interviewer:'):].strip()
+
+                    current_label = 1  # Set label to 1 for interviewer
+                elif line.startswith('Patient:'):
+                    if (current_utterance and (current_label == 1) ) :  # If there's a previous utterance, store it
+                        utterances.append((current_label, current_utterance))
+                        current_utterance = line[len('Patient:'):].strip()
+                    elif(current_utterance and (current_label == 0)):
+                        current_utterance += ' ' + line[len('Patient:'):].strip()  # Extract the utterance text
+                    else:
+                        current_utterance = line[len('Patient:'):].strip()
+
+                    current_label = 0  # Set label to 0 for patient
+                elif line.startswith('+++'):  # Skip lines with timestamps
+                    continue
+                elif line and current_utterance:  # If the line is not empty and there is an ongoing utterance
+                    current_utterance += ' ' + line.strip()  # Concatenate with the previous line
+
+        # Append the last utterance to the list
+        if current_utterance:
+            utterances.append((current_label, current_utterance))
+                
+        chat = []
+        if("Scene 1" in filepath):
+            chat.append({"role": "system", "content": args.promptStringNeighbor})
+        else:
+            chat.append({"role": "system", "content": args.promptStringLandlord})
+        
+        
+        if(utterances[0][0] == 1):
+            if(args.model_name_or_path == "meta-llama/Llama-2-7b-chat-hf"):
+                chat.append({"role": "user", "content": ""})
+            chat.append({"role": "assistant", "content": utterances[0][1]})
+        
+        utterances_only_patient=[]
+
+        start_index = 0
+        if(utterances[0][0] == 1):
+            start_index = 1
+        while(start_index < (len(utterances)-1) ):
+            utterances_only_patient.append(utterances[start_index][1])
+            start_index+=2
+        
+        for utter in utterances_only_patient:
+            chat.append({"role": "user", "content": utter})
+            tokenized_chat = torch.tensor(tokenizer.apply_chat_template(chat, tokenize=True, add_generation_prompt=True)).unsqueeze(0)
+            tokenized_chat = tokenized_chat.to(f"cuda:{accelerator.process_index}")
+            # print(f"Printing tokenized_chat: {tokenized_chat}")
+            # print(f"Shape of tokenized_chat: {tokenized_chat.shape}")
+            # print(f"Printing args.new_tokens: {args.new_tokens}")
+            model_response = model.generate(tokenized_chat, max_new_tokens = args.new_tokens)
+            # if('outputUCSD_IA_3001_Scene 1' in filepath):
+            #     print(f"model_response[0]: {model_response[0]}")
+            #     print(f"tokenized_chat[0]: {tokenized_chat[0]}")
+            #     print(f"tokenizer.decode: {tokenizer.decode(model_response[0][len(tokenized_chat[0]):])}")
+            content = ""
+            if(not(args.model_name_or_path == 'google/flan-t5-large' or args.model_name_or_path == 'google-t5/t5-base' or args.model_name_or_path == 'google-t5/t5-large' or args.model_name_or_path == 'facebook/blenderbot-400M-distill')):
+                content = tokenizer.decode(model_response[0][len(tokenized_chat[0]):], skip_special_tokens = True)
+            else:
+                content = tokenizer.decode(model_response[0], skip_special_tokens = True)
+            chat.append({"role":"assistant", "content": content }) 
+            
+        start_index = 1
+        if(len(chat[1]["content"]) == 0):
+            start_index = 2
+        
+        file_input = ''
+        for ind in range(start_index,len(chat)):
+            if(chat[ind]["role"] == "user"):
+                file_input += "Patient: "
+            else:
+                file_input += "Interviewer: "
+            file_input += chat[ind]["content"] + "\n"
+        
+        filename = filepath.split('/')[-1]
+        final_file_path = os.path.join(dirpath, filename)
+        with open(final_file_path, "w") as file:
+          # Write some text to the file
+          file.write(file_input)
+    
+    print(f"{setting} completed")
+
+if(args.generate_transcript and accelerator.is_main_process):
+    config = AutoConfig.from_pretrained(args.config_name)
+    finetuned_model_directory = os.path.join(args.output_dir, "finetuned_model")
+    
+    if(args.should_perform_lora_training):
+        if args.model_name_or_path == 'facebook/blenderbot-400M-distill':
+            model = BlenderbotForConditionalGeneration.from_pretrained(
+            args.model_name_or_path,
+            from_tf=False,
+            config=config,
+            )
+        elif (args.model_name_or_path == 'google/flan-t5-large' or args.model_name_or_path == 'google-t5/t5-base' or args.model_name_or_path == 'google-t5/t5-large'):
+                model = T5ForConditionalGeneration.from_pretrained(args.model_name_or_path,
+                    from_tf=False,
+                    config=config,
+                )
+        else:
+            model = AutoModelForCausalLM.from_pretrained(
+                args.model_name_or_path,
+                from_tf=False,
+                config=config,
+                )
+                
+        model = PeftModel.from_pretrained(model, finetuned_model_directory)
+    else:
+        if args.model_name_or_path == 'facebook/blenderbot-400M-distill':
+            model = BlenderbotForConditionalGeneration.from_pretrained(finetuned_model_directory)
+        elif (args.model_name_or_path == 'google/flan-t5-large' or args.model_name_or_path == 'google-t5/t5-base' or args.model_name_or_path == 'google-t5/t5-large'):
+                model = T5ForConditionalGeneration.from_pretrained(finetuned_model_directory)
+        else:
+            model = AutoModelForCausalLM.from_pretrained(finetuned_model_directory)
+            
+    
+    
+    model.to(f"cuda:{accelerator.process_index}")
+    tokenizer = AutoTokenizer.from_pretrained(args.output_dir)
+
+    generateConversation(model, tokenizer, BD_SC1_val_df, "BD Scene 1")
+    generateConversation(model, tokenizer, BD_SC2_val_df, "BD Scene 2")
+    generateConversation(model, tokenizer, HC_SC1_val_df, "HC Scene 1")
+    generateConversation(model, tokenizer, HC_SC2_val_df, "HC Scene 2")
+    generateConversation(model, tokenizer, SZ_SC1_val_df, "SZ Scene 1")
+    generateConversation(model, tokenizer, SZ_SC2_val_df, "SZ Scene 2")
+
+
 
 # tokenizer = AutoTokenizer.from_pretrained('microsoft/DialoGPT-small')
 # model = AutoModelForCausalLM.from_pretrained('output-small')
