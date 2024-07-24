@@ -35,7 +35,8 @@ login(hf_api_token)
 #google-t5/t5-base
 # google-t5/t5-large
 # microsoft/DialoGPT-large
-tokenizer = AutoTokenizer.from_pretrained("microsoft/DialoGPT-large")
+# microsoft/DialoGPT-small
+tokenizer = AutoTokenizer.from_pretrained("microsoft/DialoGPT-small")
 #print("Tokenizer assigned")
 
 #model = AutoModelForCausalLM.from_pretrained("facebook/blenderbot-400M-distill")
@@ -141,11 +142,11 @@ def print_gpu_utilization():
 # Args to allow for easy convertion of python script to notebook
 class Args():
     def __init__(self):
-        self.output_dir = './DialoGPT-large'  # set the output directory here
-        self.model_type = 'microsoft/DialoGPT-large' # set the model type here
-        self.model_name_or_path = 'microsoft/DialoGPT-large' # set the model id here
-        self.config_name = 'microsoft/DialoGPT-large'
-        self.tokenizer_name = 'microsoft/DialoGPT-large' # set the tokenizer name here
+        self.output_dir = './DialoGPT-small'  # set the output directory here
+        self.model_type = 'microsoft/DialoGPT-small' # set the model type here
+        self.model_name_or_path = 'microsoft/DialoGPT-small' # set the model id here
+        self.config_name = 'microsoft/DialoGPT-small'
+        self.tokenizer_name = 'microsoft/DialoGPT-small' # set the tokenizer name here
         self.cache_dir = './cached' # set the path to cache directory here
         self.block_size = 512
         self.do_train = True
@@ -324,7 +325,14 @@ def updateDatasetListEvaluate(chat, utterances, end_index, tokenizer, datasetLis
    
    updateChat(chat, utterances[end_index-1])
 
-   tokenized_chat = tokenizer.apply_chat_template(chat, tokenize=True, add_generation_prompt=True) 
+   tokenized_chat = tokenizer.apply_chat_template(chat, tokenize=True, add_generation_prompt=True)
+   if(len(tokenized_chat)>(args.context_size-args.new_tokens)):
+      while(len(tokenized_chat)>(args.context_size-args.new_tokens) and len(chat)>1):
+         del chat[1]
+         tokenized_chat = tokenizer.apply_chat_template(chat, tokenize=True, add_generation_prompt=False)
+    
+    #   l1 = len(tokenizer.apply_chat_template(chat[:len(chat)-1], tokenize=True, add_generation_prompt=False))
+    #   labelList = [-100]*l1 + tokenized_chat[l1:] 
    updateChat(chat, utterances[end_index])
    interviewerTokenized = tokenizer.encode(utterances[end_index][1]) + [tokenizer.eos_token_id]
    #if(len(tokenized_chat + interviewerTokenized)>args.context_size):
@@ -1482,7 +1490,14 @@ def generateConversation(model, tokenizer, df_val, setting):
         
         for utter in utterances_only_patient:
             chat.append({"role": "user", "content": utter})
-            tokenized_chat = torch.tensor(tokenizer.apply_chat_template(chat, tokenize=True, add_generation_prompt=True)).unsqueeze(0)
+            tokenized_chat = tokenizer.apply_chat_template(chat, tokenize=True, add_generation_prompt=True)
+            if(len(tokenized_chat)>(args.context_size-args.new_tokens)):
+                while(len(tokenized_chat)>(args.context_size-args.new_tokens) and len(chat)>1):
+                    del chat[1]
+                    tokenized_chat = tokenizer.apply_chat_template(chat, tokenize=True, add_generation_prompt=False)
+            tokenized_chat = torch.tensor(tokenized_chat).unsqueeze(0)
+            # tokenized_chat = torch.tensor(tokenizer.apply_chat_template(chat, tokenize=True, add_generation_prompt=True)).unsqueeze(0)
+    
             tokenized_chat = tokenized_chat.to(f"cuda:{accelerator.process_index}")
             # print(f"Printing tokenized_chat: {tokenized_chat}")
             # print(f"Shape of tokenized_chat: {tokenized_chat.shape}")
