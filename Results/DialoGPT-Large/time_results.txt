@@ -1,1 +1,1 @@
-Training time: 13858.111965179443
+Training time: 3397.3915972709656

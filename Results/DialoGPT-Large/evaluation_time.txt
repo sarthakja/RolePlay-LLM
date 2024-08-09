@@ -1,7 +1,7 @@
 
-Evaluation time of BD Scene 1: 167.08646178245544
-Evaluation time of BD Scene 2: 200.63703155517578
-Evaluation time of HC Scene 1: 111.0482292175293
-Evaluation time of HC Scene 2: 128.15822625160217
-Evaluation time of SZ Scene 1: 170.85589051246643
-Evaluation time of SZ Scene 2: 178.37074089050293
+Evaluation time of BD Scene 1: 46.42696976661682
+Evaluation time of BD Scene 2: 57.72851276397705
+Evaluation time of HC Scene 1: 26.690261363983154
+Evaluation time of HC Scene 2: 31.210556268692017
+Evaluation time of SZ Scene 1: 44.37770438194275
+Evaluation time of SZ Scene 2: 54.79668641090393
