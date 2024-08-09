@@ -1,5 +1,5 @@
 # RolePlay-LLM
-This repository contains the source code for my MS project (Jan-July 2024). The entire code is present in the python file ms_project.py. The file MS_project_report presents the project report. The code is adapted from these two amazing sources: this [script](https://github.com/huggingface/transformers/blob/master/examples/language-modeling/run_language_modeling.py) from Huggingface and great [tutorial](https://nathancooper.io/i-am-a-nerd/chatbot/deep-learning/gpt2/2020/05/12/chatbot-part-1.html) from Nathan Cooper. 
+This repository contains the source code for my MS project (Jan-July 2024). The entire code is present in the python file ms_project.py. The file MS project report presents the project report. The code is adapted from these two amazing sources: this [script](https://github.com/huggingface/transformers/blob/master/examples/language-modeling/run_language_modeling.py) from Huggingface and great [tutorial](https://nathancooper.io/i-am-a-nerd/chatbot/deep-learning/gpt2/2020/05/12/chatbot-part-1.html) from Nathan Cooper. 
 
 The code makes different LLMs (DialoGPT, TinyLlama, Llama2-chat, T5) roleplay the neighbor and landlord for the neighbor and landlord scenarios respectively in Social Skills Performace Assessment (SSPA). The report of the project is present in the file CS_521_final_report.
 
