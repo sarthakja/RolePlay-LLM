@@ -40,3 +40,160 @@ The code file uses the [accelerate framework](https://huggingface.co/docs/accele
   
 # Results
 The results for the all the models are present in the results subfolder.
+
+# RolePlay-LLM: Fine-tuning Conversational LLMs for Structured Role-Based Dialogue
+
+## Overview
+
+This project focuses on fine-tuning large language models (LLMs) to generate **context-aware, role-consistent conversational dialogue** in structured scenarios. The primary use case explored is **clinical and behavioral roleplay conversations**, where maintaining context, speaker roles, and conversational coherence is critical.
+
+Unlike generic chatbots, this system is designed to handle:
+- Multi-turn dialogue with **strict role separation**
+- Long conversational context
+- Domain-specific nuances (e.g., clinical interviews)
+
+---
+
+## Motivation
+
+Standard pretrained conversational models often:
+- Lose **role consistency** across turns
+- Fail to maintain **long-range context**
+- Produce **generic or incoherent responses** in structured settings
+
+This project aims to address these limitations by building a **fine-tuning pipeline that explicitly models conversational structure and constraints**.
+
+---
+
+## System Design
+
+### 1. Data Processing Pipeline
+
+- Converted raw transcripts into **structured multi-turn dialogue format**
+- Explicitly encoded:
+  - Speaker roles (e.g., interviewer vs subject)
+  - Turn boundaries
+- Handled noisy and inconsistent transcript formats through custom preprocessing
+
+### 2. Training Strategy
+
+- Used **Causal Language Modeling (CLM)** for dialogue generation
+- Designed **selective loss masking**:
+  - Model only learns to predict **target speaker responses**
+  - Prevents leakage of context tokens into loss computation
+
+### 3. Context Handling (Key Challenge)
+
+**Problem:** Conversations exceed model token limits  
+
+**Solution:**
+- Implemented **sliding window context strategy**
+- Preserved most recent and relevant turns
+- Carefully balanced:
+  - Context retention vs token budget
+  - Information loss vs computational cost
+
+---
+
+## Key Technical Challenges
+
+### 1. Long Context Truncation
+- Naive truncation destroys conversational coherence
+- Required designing **context-aware truncation logic**
+- Tradeoff between:
+  - Model performance
+  - Memory constraints
+
+---
+
+### 2. Role Consistency
+
+**Problem:** Model mixes speaker roles  
+
+**Solution:**
+- Introduced **explicit role tokens / prompt prefixes**
+- Structured input formatting to reinforce role identity
+- Iteratively refined prompt templates
+
+---
+
+### 3. Noisy Real-World Data
+
+- Clinical transcripts contain:
+  - Incomplete turns
+  - Formatting inconsistencies
+- Built robust preprocessing pipeline to:
+  - Normalize dialogue
+  - Remove artifacts
+  - Maintain semantic integrity
+
+---
+
+### 4. Compute Constraints
+
+- Fine-tuning large models is resource-intensive
+
+**Optimizations:**
+- **LoRA (Low-Rank Adaptation)** for parameter-efficient training
+- Gradient checkpointing to reduce memory usage
+- Mixed precision training
+
+---
+
+### 5. Evaluation Complexity
+
+Traditional metrics are insufficient for dialogue.
+
+**Approach:**
+- Used **BERTScore** for semantic similarity
+- Used **ROUGE** for lexical overlap
+- Performed **qualitative evaluation**:
+  - Coherence across turns
+  - Role adherence
+  - Context retention
+
+---
+
+## Tech Stack
+
+- **Language**: Python  
+- **Frameworks**: PyTorch, Hugging Face Transformers  
+- **Training Utilities**: Accelerate, PEFT (LoRA)  
+- **Evaluation**: BERTScore, ROUGE  
+- **Data Processing**: Pandas, NumPy  
+
+---
+
+## Results
+
+- Achieved **~0.8 BERTScore F1**, indicating strong semantic alignment
+- Improved:
+  - Context retention across turns
+  - Role consistency in generated dialogue
+- Generated outputs that are **qualitatively more structured and coherent** than baseline models
+
+---
+
+## Learnings
+
+- Fine-tuning LLMs is less about architecture and more about:
+  - **Data representation**
+  - **Loss design**
+  - **Context management**
+- Evaluation remains a major bottleneck for conversational systems
+- Small design decisions (prompt format, truncation strategy) have **outsized impact**
+
+---
+
+## Future Work
+
+- Reinforcement learning for dialogue optimization
+- Better evaluation frameworks (LLM-as-judge)
+- Deployment as an interactive system
+- Exploration of larger instruction-tuned models
+
+---
+
+## Conclusion
+
+This project demonstrates how to move from a generic pretrained model to a **domain-adapted conversational system**, while navigating real-world constraints like noisy data, limited context windows, and compute limitations.
